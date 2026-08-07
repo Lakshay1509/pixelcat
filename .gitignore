@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Generated from src/renderer/pet/sprites.js by `npm run icons`.
+# Committed deliberately so a fresh clone can run without a build step —
+# regenerate with `npm run icons` after editing the sprite.
+!assets/icon.png
+!assets/tray.png
+!assets/tray@2x.png

@@ -1,0 +1,65 @@
+appId: com.lakshaygupta.pixelcat
+productName: Pixelcat
+copyright: Copyright © 2026 Lakshay Gupta
+
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+  - "!**/*.map"
+  - "!tools/**"
+
+# uiohook-napi ships prebuilt .node binaries. They must stay outside the asar
+# archive or the loader can't dlopen them at runtime.
+asarUnpack:
+  - "**/node_modules/uiohook-napi/**"
+
+# Do NOT let electron-builder rebuild native deps from source. uiohook-napi is
+# an N-API addon, and N-API is ABI-stable across both Node and Electron, so its
+# prebuilt binary already works — rebuilding only introduces a hard dependency
+# on X11 dev headers (libX11/libXtst/libxkbcommon-x11) that fails the build on
+# any machine without them, for no benefit.
+npmRebuild: false
+
+mac:
+  category: public.app-category.utilities
+  icon: assets/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  extendInfo:
+    # Agent app: no dock tile, no menu bar. A desktop pet is not a document app.
+    LSUIElement: 1
+    # macOS shows this string when the app asks for the Accessibility grant that
+    # global typing detection needs.
+    NSAppleEventsUsageDescription: >-
+      Pixelcat watches for keystrokes so the cat can react while you type.
+
+win:
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Pixelcat
+
+linux:
+  icon: assets/icon.png
+  category: Utility
+  synopsis: A pixel cat that lives on your desktop
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64]

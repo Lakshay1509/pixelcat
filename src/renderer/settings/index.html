@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
+    <title>Pixelcat</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <header class="head">
+      <canvas id="preview" width="128" height="128" aria-label="Cat preview"></canvas>
+      <div class="head-text">
+        <h1>PIXELCAT</h1>
+        <p id="tagline">A pixel cat that lives in your computer.</p>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Colour</h2>
+        <div id="palettes" class="swatches"></div>
+      </section>
+
+      <section>
+        <h2>Pattern</h2>
+        <div id="patterns" class="chips"></div>
+      </section>
+
+      <section>
+        <h2>Size</h2>
+        <div class="row">
+          <input id="scale" type="range" min="2" max="10" step="1" />
+          <output id="scaleOut" class="num">4x</output>
+        </div>
+      </section>
+
+      <section>
+        <h2>Position</h2>
+        <div class="row">
+          <span class="lbl">X</span>
+          <input type="number" id="posX" class="mins" />
+          <span class="lbl">Y</span>
+          <input type="number" id="posY" class="mins" />
+          <select id="posDisplay" class="text sel" hidden></select>
+        </div>
+        <div id="snap" class="snap" aria-label="Snap to screen position"></div>
+        <p class="note">Drag the cat anywhere, or type exact coordinates. Snap buttons use the selected screen.</p>
+      </section>
+
+      <section>
+        <h2>Reactions</h2>
+        <div id="behaviours" class="toggles"></div>
+        <p id="inputStatus" class="note"></p>
+        <div class="row" id="gainRow" hidden>
+          <span class="lbl">Pointer speed</span>
+          <input id="gain" type="range" min="0.4" max="3" step="0.1" />
+          <output id="gainOut" class="num">1.0x</output>
+        </div>
+        <p class="note" id="gainNote" hidden>
+          Wayland hides the real cursor position, so it is estimated from raw mouse
+          movement. If the cat looks the wrong way, tune this — or flick the mouse
+          into a screen corner, which resyncs it exactly.
+        </p>
+      </section>
+
+      <section>
+        <h2>Reminders</h2>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="stretchOn" /> <span>Stretch</span></label>
+          <input type="number" id="stretchMin" min="1" max="600" class="mins" />
+          <span class="unit">min</span>
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="waterOn" /> <span>Drink water</span></label>
+          <input type="number" id="waterMin" min="1" max="600" class="mins" />
+          <span class="unit">min</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Pomodoro</h2>
+        <div class="row">
+          <span class="lbl">Focus</span>
+          <input type="number" id="focusMin" min="1" max="180" class="mins" />
+          <span class="unit">min</span>
+          <span class="lbl">Break</span>
+          <input type="number" id="breakMin" min="1" max="60" class="mins" />
+          <span class="unit">min</span>
+          <span class="lbl">Rounds</span>
+          <input type="number" id="rounds" min="1" max="12" class="mins" />
+        </div>
+        <button id="pomoToggle" class="btn">START POMODORO</button>
+      </section>
+
+      <section>
+        <h2>Personal</h2>
+        <div class="row">
+          <span class="lbl">Your name</span>
+          <input type="text" id="name" maxlength="24" placeholder="(optional)" class="text" />
+        </div>
+        <p class="note">The cat uses your name in reminders.</p>
+        <div class="row">
+          <span class="lbl">Pinned note</span>
+          <input type="text" id="pinned" maxlength="60" placeholder="Stays above its head" class="text" />
+        </div>
+      </section>
+
+      <section>
+        <h2>Scheduled messages</h2>
+        <div id="messages" class="messages"></div>
+        <div class="row">
+          <input type="time" id="msgTime" class="text time" />
+          <input type="text" id="msgText" maxlength="60" placeholder="What should it say?" class="text" />
+          <button id="msgAdd" class="btn small">ADD</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>System</h2>
+        <div class="toggles">
+          <label class="check"><input type="checkbox" id="alwaysOnTop" /> <span>Always on top</span></label>
+          <label class="check"><input type="checkbox" id="launchAtLogin" /> <span>Launch at login</span></label>
+        </div>
+      </section>
+    </main>
+
+    <script src="../pet/sprites.js"></script>
+    <script src="../pet/cat.js"></script>
+    <script src="settings.js"></script>
+  </body>
+</html>

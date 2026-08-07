@@ -1,0 +1,27 @@
+{
+  "name": "pixelcat",
+  "version": "0.1.0",
+  "description": "A pixel cat that lives on your desktop",
+  "main": "src/main/index.js",
+  "author": "Lakshay Gupta",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "icons": "node tools/make-icons.mjs",
+    "preview": "node tools/preview.mjs /tmp/cat-preview.png 7",
+    "prebuild": "node tools/make-icons.mjs",
+    "build": "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "optionalDependencies": {
+    "uiohook-napi": "^1.5.4"
+  }
+}
