@@ -19,11 +19,17 @@
 
   let S = null;
   let L = null;
+  // Where the sprite is drawn inside the window. Normally the layout padding,
+  // but main slides it when the cat is flush against a screen edge the window
+  // itself is not allowed to cross.
+  let catX = 0;
+  let catY = 0;
 
   const cursor = { lx: -9999, ly: -9999, speed: 0, dragging: false };
   let particles = [];
   let lastRect = null; // cat bounds from the previous frame, for hit testing
   let staleMode = false; // true when main has no usable global cursor
+  let winY = 100; // window's screen y, for deciding which side bubbles go
 
   // drives
   let heat = 0; // 0..1 overheat blush
@@ -56,6 +62,8 @@
   function applySettings(s) {
     S = s;
     L = s.layout;
+    catX = L.catX + ((s.catOffset && s.catOffset.x) || 0);
+    catY = L.catY + ((s.catOffset && s.catOffset.y) || 0);
     const dpr = window.devicePixelRatio || 1;
     cvs.width = Math.round(L.width * dpr);
     cvs.height = Math.round(L.height * dpr);
@@ -87,6 +95,7 @@
   window.pet.on("cursor", (c) => {
     cursor.dragging = c.dragging;
     staleMode = !!c.stale;
+    if (typeof c.wy === "number") winY = c.wy;
     if (c.stale) return; // position is meaningless; local events are all we have
     if (now() - localAt < 400) return; // a real pointer event is more accurate
     cursor.lx = c.lx;
@@ -238,8 +247,8 @@
 
   function headPoint() {
     return {
-      x: L.catX + A.headTop.x * L.scale,
-      y: L.catY + A.headTop.y * L.scale,
+      x: catX + A.headTop.x * L.scale,
+      y: catY + A.headTop.y * L.scale,
     };
   }
 
@@ -279,8 +288,8 @@
     sleepiness = clamp((idleMs - 120_000) / 180_000, 0, 1);
 
     // cat centre in window coords
-    const cx = L.catX + A.head.x * L.scale;
-    const cy = L.catY + A.head.y * L.scale;
+    const cx = catX + A.head.x * L.scale;
+    const cy = catY + A.head.y * L.scale;
     const dx = cursor.lx - cx;
     const dy = cursor.ly - cy;
     const dist = Math.hypot(dx, dy);
@@ -309,7 +318,7 @@
     // Petting: anywhere on the upper half counts as the head, and the movement
     // threshold is low — a slow deliberate stroke should register, and it did
     // not when the bar was set at a brisk flick.
-    const overHead = inside && cursor.ly < L.catY + 18 * L.scale;
+    const overHead = inside && cursor.ly < catY + 18 * L.scale;
     if (S.behaviours.petting && overHead && cursor.speed > 0.5 && !dragging) {
       petMeter = clamp(petMeter + dt * 1.8, 0, 1);
       lastActivity = Date.now();
@@ -428,8 +437,8 @@
           : "neutral";
 
     const hit = cat.render(ctx, {
-      x: L.catX + ox,
-      y: L.catY + oy,
+      x: catX + ox,
+      y: catY + oy,
       scale: L.scale,
       eye,
       lids,
@@ -488,9 +497,16 @@
       window.pet.send("hit-rect", rect);
     }
 
-    // keep the bubble pinned above the cat's head
-    bubbleEl.style.left = `${L.catX + (CatSprites.W * L.scale) / 2 + ox}px`;
-    bubbleEl.style.top = `${L.catY + oy - 6}px`;
+    // Pin the bubble above the cat's head — unless the window is against the
+    // top of the screen, in which case "above" is off-screen and the bubble
+    // would simply never be seen. Snapping the cat flush to the top edge makes
+    // that a normal position, not an edge case.
+    const flip = winY < 12;
+    bubbleEl.classList.toggle("below", flip);
+    bubbleEl.style.left = `${catX + (CatSprites.W * L.scale) / 2 + ox}px`;
+    bubbleEl.style.top = flip
+      ? `${catY + CatSprites.H * L.scale + oy - 4}px`
+      : `${catY + oy - 6}px`;
   }
 
   requestAnimationFrame(frame);

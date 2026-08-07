@@ -92,6 +92,22 @@ canvas#stage {
   background: #f6dcc4;
 }
 
+/* Flipped below the cat when the window is against the top of the screen. */
+.bubble.below {
+  transform: translate(-50%, 0) translateY(4px) scale(0.9);
+}
+
+.bubble.below.show {
+  transform: translate(-50%, 0) translateY(8px) scale(1);
+}
+
+.bubble.below::after {
+  bottom: auto;
+  top: -4px;
+  border-bottom: none;
+  border-top: 2px solid #14141a;
+}
+
 .bubble[data-kind="stretch"] {
   background: #cfe9d2;
 }

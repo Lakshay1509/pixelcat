@@ -150,6 +150,24 @@ Two details that decide whether this feels alive or broken:
 On Linux it reads `/proc` directly — no process spawn, so polling at 1Hz doesn't
 become the CPU load it's trying to measure. Elsewhere it deltas `ps` CPU time.
 
+### Position means the CAT, not its window
+
+`settings.position` is the sprite's own top-left on screen. The window is larger
+than the cat (padding is the stage for bubbles and pouncing), so aligning the
+*window* to a requested point parks the cat ~60px in from every screen edge —
+you can never reach the corner.
+
+Placing the window off-screen to compensate does not work: KWin, like most
+window managers, refuses a negative position and silently clamps it back
+(verified — asking for `-60,-70` produced a window at `0,0`).
+
+So the window always stays fully on-screen and any shortfall is handed to the
+renderer as `catOffset`: the sprite slides *within* its own window to reach the
+true edge. Snapping to a corner now lands the cat flush against it.
+
+One consequence: at the top edge, "above the cat" is off-screen, so speech
+bubbles flip to below the cat automatically.
+
 ### Dragging uses relative deltas, never the global cursor
 
 Drag is driven by pointer capture and `movementX/Y` from the renderer, and main

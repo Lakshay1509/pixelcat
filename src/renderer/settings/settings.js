@@ -231,21 +231,26 @@
       }
   }
 
-  function snapTo(v, h) {
+  async function snapTo(v, h) {
+    // Defensive: if our copy of the settings ever lacks the display list, go
+    // and get it rather than silently doing nothing.
+    if (!S || !S.layout || !S.displays) S = await window.pet.invoke("get-settings");
     const d = currentDisplay();
     if (!d || !S.layout) return;
+
     const wa = d.workArea;
-    const m = 24;
-    const W = S.layout.width;
-    const H = S.layout.height;
+    const L = S.layout;
+    // X/Y are the CAT's own screen position, so the edges are just the work
+    // area edges — main slides the sprite inside its window to get there.
     const x =
-      h === "left" ? wa.x + m
-      : h === "center" ? Math.round(wa.x + (wa.width - W) / 2)
-      : wa.x + wa.width - W - m;
+      h === "left" ? wa.x
+      : h === "center" ? Math.round(wa.x + (wa.width - L.size) / 2)
+      : wa.x + wa.width - L.size;
     const y =
-      v === "top" ? wa.y + m
-      : v === "middle" ? Math.round(wa.y + (wa.height - H) / 2)
-      : wa.y + wa.height - H - m;
+      v === "top" ? wa.y
+      : v === "middle" ? Math.round(wa.y + (wa.height - L.size) / 2)
+      : wa.y + wa.height - L.size;
+
     $("posX").value = x;
     $("posY").value = y;
     save({ position: { x, y } }, "position");

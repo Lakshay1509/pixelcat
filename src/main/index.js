@@ -40,6 +40,9 @@ let ignoring = null; // last value passed to setIgnoreMouseEvents; null = unset
 let drag = false; // a drag gesture is in progress
 let dragSeen = 0; // last time we heard from it, for the stuck-drag watchdog
 let agents = null;
+// How far the sprite is slid inside its window so the cat can reach a screen
+// edge the window itself is not allowed to cross. Usually {0,0}.
+let catOffset = { x: 0, y: 0 };
 
 // --- geometry ---------------------------------------------------------------
 // Window is deliberately larger than the cat: the padding is the stage it acts
@@ -58,11 +61,12 @@ function layout(scale) {
   };
 }
 
+// Returns the CAT's screen position, matching what `settings.position` means.
 function defaultPosition(l) {
   const { workArea } = screen.getPrimaryDisplay();
   return {
-    x: Math.round(workArea.x + workArea.width - l.width - 24),
-    y: Math.round(workArea.y + workArea.height - l.height - 24),
+    x: Math.round(workArea.x + workArea.width - l.size - 12),
+    y: Math.round(workArea.y + workArea.height - l.size - 12),
   };
 }
 
@@ -88,22 +92,85 @@ function displayInfo() {
   return screen.getAllDisplays().map((d, i) => ({
     id: d.id,
     label: d.label || `Display ${i + 1}`,
-    workArea: d.workArea,
+    bounds: d.bounds, // full screen, for clamping
+    workArea: d.workArea, // panel-aware, for snapping
     primary: d.id === primaryId,
   }));
 }
 
-function sendSettings() {
+function unionBounds() {
+  const b = displayInfo().reduce(
+    (acc, d) => ({
+      x0: Math.min(acc.x0, d.bounds.x),
+      y0: Math.min(acc.y0, d.bounds.y),
+      x1: Math.max(acc.x1, d.bounds.x + d.bounds.width),
+      y1: Math.max(acc.y1, d.bounds.y + d.bounds.height),
+    }),
+    { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+  );
+  return Number.isFinite(b.x0) ? b : { x0: 0, y0: 0, x1: 1920, y1: 1080 };
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/*
+ * placeCat — put the CAT at a screen coordinate, not the window.
+ *
+ * `settings.position` is the cat's own top-left on screen. The window is
+ * deliberately larger than the sprite (the padding is the stage for speech
+ * bubbles and pouncing), so if the window were simply aligned to the requested
+ * point, the cat would always sit ~60px in from any screen edge.
+ *
+ * Placing the window off-screen to compensate does not work either: KWin (and
+ * most window managers) refuse a negative position and quietly clamp it back,
+ * which is exactly what left the cat stranded away from the edge.
+ *
+ * So the window always stays fully on-screen, and any shortfall is handed to
+ * the renderer as `catOffset` — the sprite slides *within* its window to reach
+ * the true edge. Same trick makes the corners reachable on every platform
+ * without relying on off-screen window placement being permitted.
+ */
+function placeCat(catPos) {
+  if (!petWin || petWin.isDestroyed()) return catPos;
+  const l = layout(store.get().scale);
+  const b = unionBounds();
+
+  const cx = clamp(Math.round(catPos.x), b.x0, b.x1 - l.size);
+  const cy = clamp(Math.round(catPos.y), b.y0, b.y1 - l.size);
+
+  const wantX = cx - l.catX;
+  const wantY = cy - l.catY;
+  const wx = clamp(wantX, b.x0, b.x1 - l.width);
+  const wy = clamp(wantY, b.y0, b.y1 - l.height);
+
+  petWin.setPosition(Math.round(wx), Math.round(wy));
+  catOffset = { x: Math.round(wantX - wx), y: Math.round(wantY - wy) };
+  store.set({ position: { x: cx, y: cy } });
+  return { x: cx, y: cy };
+}
+
+// Where the cat currently is on screen, derived from the live window position.
+function currentCatPos() {
+  const l = layout(store.get().scale);
+  const [wx, wy] = petWin.getPosition();
+  return { x: wx + l.catX + catOffset.x, y: wy + l.catY + catOffset.y };
+}
+
+// ONE builder for every settings reply. get-settings, set-settings and the
+// broadcast must all return the same shape: set-settings used to omit
+// `displays`, so the renderer's copy lost it after the first save and the snap
+// presets silently stopped working until the app was relaunched.
+function settingsPayload() {
   const s = store.get();
-  const l = layout(s.scale);
   // Report where the cat actually IS, not where settings last recorded it —
   // on first run `position` is still null and the window is placed by default.
   let position = s.position;
-  if (petWin && !petWin.isDestroyed()) {
-    const [x, y] = petWin.getPosition();
-    position = { x, y };
-  }
-  const payload = { ...s, position, layout: l, displays: displayInfo() };
+  if (petWin && !petWin.isDestroyed()) position = currentCatPos();
+  return { ...s, position, catOffset, layout: layout(s.scale), displays: displayInfo() };
+}
+
+function sendSettings() {
+  const payload = settingsPayload();
   if (petWin && !petWin.isDestroyed()) petWin.webContents.send("settings", payload);
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send("settings", payload);
 }
@@ -112,13 +179,13 @@ function sendSettings() {
 function createPet() {
   const s = store.get();
   const l = layout(s.scale);
-  const pos = s.position || defaultPosition(l);
+  const wanted = s.position || defaultPosition(l);
 
   petWin = new BrowserWindow({
     width: l.width,
     height: l.height,
-    x: pos.x,
-    y: pos.y,
+    x: Math.round(wanted.x - l.catX),
+    y: Math.round(wanted.y - l.catY),
     frame: false,
     transparent: true,
     resizable: false,
@@ -151,14 +218,17 @@ function createPet() {
     clearTimeout(movedTimer);
     movedTimer = setTimeout(() => {
       if (!petWin || petWin.isDestroyed()) return;
-      const [x, y] = petWin.getPosition();
-      store.set({ position: { x, y } });
+      store.set({ position: currentCatPos() });
       // Keep the X/Y fields in settings truthful when the cat is dragged.
       if (settingsWin && !settingsWin.isDestroyed()) sendSettings();
     }, 180);
   });
 
   petWin.webContents.on("did-finish-load", () => {
+    // Re-place once the window exists so a stored position that no longer fits
+    // (screen resized, monitor unplugged) is corrected, and so catOffset is
+    // computed for positions flush against a screen edge.
+    placeCat(wanted);
     sendSettings();
     send("input-status", input.status);
   });
@@ -301,7 +371,10 @@ function wireInput() {
       }
     }
 
-    send("cursor", { gx: p.x, gy: p.y, lx, ly, speed: lastSpeed, dragging: !!drag, stale });
+    // wy lets the renderer know when the window is hard against (or past) the
+    // top of the screen, so it can flip speech bubbles below the cat instead
+    // of drawing them off-screen.
+    send("cursor", { gx: p.x, gy: p.y, lx, ly, wy, speed: lastSpeed, dragging: !!drag, stale });
   });
 
 }
@@ -332,10 +405,11 @@ function wireIpc() {
   ipcMain.on("drag-end", () => {
     drag = false;
     send("drag", { active: false });
-    if (petWin && !petWin.isDestroyed()) {
-      const [x, y] = petWin.getPosition();
-      store.set({ position: { x, y } });
-    }
+    if (!petWin || petWin.isDestroyed()) return;
+    // Normalise: re-derive the cat's screen position and re-place it, which
+    // recomputes catOffset if the drag ended against a screen edge.
+    placeCat(currentCatPos());
+    sendSettings();
   });
 
   ipcMain.on("open-settings", openSettings);
@@ -364,25 +438,20 @@ function wireIpc() {
     }
   });
 
-  ipcMain.handle("get-settings", () => {
-    const s = store.get();
-    let position = s.position;
-    if (petWin && !petWin.isDestroyed()) {
-      const [x, y] = petWin.getPosition();
-      position = { x, y };
-    }
-    return { ...s, position, layout: layout(s.scale), displays: displayInfo() };
-  });
+  ipcMain.handle("get-settings", () => settingsPayload());
 
   ipcMain.handle("set-settings", (_e, patch) => {
     const before = store.get();
     const after = store.set(patch);
 
-    // Resizing the stage means rebuilding the window bounds around the cat.
+    // Resizing the stage means rebuilding the window bounds around the cat,
+    // then re-placing so the cat keeps its screen position rather than drifting.
     if (patch.scale && patch.scale !== before.scale && petWin && !petWin.isDestroyed()) {
       const l = layout(after.scale);
+      const keep = currentCatPos();
       const [x, y] = petWin.getPosition();
       petWin.setBounds({ x, y, width: l.width, height: l.height });
+      placeCat(keep);
     }
     if (patch.alwaysOnTop !== undefined && petWin && !petWin.isDestroyed()) {
       petWin.setAlwaysOnTop(patch.alwaysOnTop, "screen-saver");
@@ -391,30 +460,13 @@ function wireIpc() {
       app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin });
     }
     if (patch.pointerGain !== undefined) input.setGain(patch.pointerGain);
-    if (patch.position && petWin && !petWin.isDestroyed()) {
-      // Clamp into the desktop so a fat-fingered coordinate can't strand the
-      // cat off-screen with no way to get it back.
-      const l = layout(after.scale);
-      const b = displayInfo().reduce(
-        (acc, d) => ({
-          x0: Math.min(acc.x0, d.workArea.x),
-          y0: Math.min(acc.y0, d.workArea.y),
-          x1: Math.max(acc.x1, d.workArea.x + d.workArea.width),
-          y1: Math.max(acc.y1, d.workArea.y + d.workArea.height),
-        }),
-        { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
-      );
-      const x = Math.round(Math.max(b.x0, Math.min(b.x1 - l.width, patch.position.x)));
-      const y = Math.round(Math.max(b.y0, Math.min(b.y1 - l.height, patch.position.y)));
-      petWin.setPosition(x, y);
-      store.set({ position: { x, y } });
-    }
+    if (patch.position && petWin && !petWin.isDestroyed()) placeCat(patch.position);
     if (patch.reminders) reminders.resetCadence();
     if (patch.agentNames !== undefined || patch.behaviours) applyAgentSettings();
 
     sendSettings();
     refreshTrayMenu();
-    return { ...after, layout: layout(after.scale) };
+    return settingsPayload();
   });
 
   ipcMain.handle("get-input-status", () => input.status);
