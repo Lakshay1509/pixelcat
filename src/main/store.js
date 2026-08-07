@@ -28,7 +28,11 @@ const DEFAULTS = {
     kneading: true,
     overheat: true,
     scrollUnroll: true,
+    agentReactions: true,
   },
+  // Extra process names to treat as AI agents, comma separated. Empty means
+  // just the built-in list (claude, codex, cursor-agent, opencode, aider, ...).
+  agentNames: "",
   reminders: {
     stretch: { enabled: true, everyMin: 45 },
     water: { enabled: true, everyMin: 60 },

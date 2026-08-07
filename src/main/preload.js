@@ -16,11 +16,13 @@ const FROM_MAIN = [
   "pomodoro",
   "input-status",
   "drag",
+  "agent",
 ];
 
 const TO_MAIN = [
   "hit-rect",
   "drag-start",
+  "drag-move",
   "drag-end",
   "open-settings",
   "close-settings",
@@ -28,7 +30,13 @@ const TO_MAIN = [
   "action",
 ];
 
-const INVOKE = ["get-settings", "set-settings", "get-input-status", "get-catalog"];
+const INVOKE = [
+  "get-settings",
+  "set-settings",
+  "get-input-status",
+  "get-catalog",
+  "grant-input-access",
+];
 
 contextBridge.exposeInMainWorld("pet", {
   on(channel, listener) {

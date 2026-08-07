@@ -30,6 +30,9 @@
   let petMeter = 0; // 0..1 purring
   let huntAmt = 0; // 0..1 pounce lean
   let sleepiness = 0; // 0..1
+  let hoverAmt = 0; // 0..1 "I noticed you" perk-up
+  let wasInside = false;
+  let thinking = false; // an AI agent is working
 
   let lastKey = 0;
   let keyTimes = [];
@@ -145,6 +148,24 @@
     timerEl.classList.add("show");
   });
 
+  window.pet.on("agent", ({ state, name }) => {
+    if (!S || S.behaviours.agentReactions === false) return;
+    if (state === "thinking") {
+      thinking = true;
+      return;
+    }
+    thinking = false;
+    jumpUntil = now() + 900; // the happy hop
+    say(`${name || "agent"} finished!`, "agent", 6000);
+    const h = headPoint();
+    for (let i = 0; i < 6; i++)
+      spawn("spark", h.x + (Math.random() - 0.5) * 40, h.y, {
+        colour: "#ffe9a8",
+        life: 0.9,
+        vy: -50 - Math.random() * 30,
+      });
+  });
+
   function say(text, kind, ms = 8000) {
     bubbleEl.textContent = text;
     bubbleEl.dataset.kind = kind || "";
@@ -156,11 +177,43 @@
   // --- pointer -------------------------------------------------------------
   // These only fire while the window is NOT click-through, i.e. while the cursor
   // is genuinely over the cat — main flips that for us.
-  cvs.addEventListener("mousedown", (e) => {
-    if (e.button === 2) return;
-    window.pet.send("drag-start", { ox: e.clientX, oy: e.clientY });
+  /*
+   * Drag via pointer capture and RELATIVE deltas.
+   *
+   * The previous version sent an absolute grab offset and let main pin the
+   * window to the global cursor — which is frozen on Wayland, so the cat teleported
+   * to one spot and stuck there, overriding the position presets. Pointer capture
+   * also guarantees we still receive move/up events once the pointer leaves the
+   * window, which is what used to strand the drag flag set forever.
+   */
+  let dragLocal = false;
+
+  cvs.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    dragLocal = true;
+    try {
+      cvs.setPointerCapture(e.pointerId);
+    } catch {}
+    window.pet.send("drag-start");
   });
-  window.addEventListener("mouseup", () => window.pet.send("drag-end"));
+
+  cvs.addEventListener("pointermove", (e) => {
+    if (!dragLocal) return;
+    if (e.movementX || e.movementY)
+      window.pet.send("drag-move", { dx: e.movementX, dy: e.movementY });
+  });
+
+  const endDrag = (e) => {
+    if (!dragLocal) return;
+    dragLocal = false;
+    try {
+      if (e && e.pointerId !== undefined) cvs.releasePointerCapture(e.pointerId);
+    } catch {}
+    window.pet.send("drag-end");
+  };
+  cvs.addEventListener("pointerup", endDrag);
+  cvs.addEventListener("pointercancel", endDrag);
+  window.addEventListener("blur", () => endDrag(null));
   window.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     window.pet.send("action", { type: "menu" });
@@ -242,13 +295,26 @@
       cursor.ly >= lastRect.y &&
       cursor.ly <= lastRect.y + lastRect.h;
 
-    // petting: cursor over the head, moving
-    const overHead = inside && dist < 11 * L.scale;
-    if (S.behaviours.petting && overHead && cursor.speed > 1.2 && !dragging) {
-      petMeter = clamp(petMeter + dt * 1.4, 0, 1);
+    // Hover: simply being noticed is its own reaction. Without this the cat
+    // ignores you until you wiggle the mouse on exactly the right pixels,
+    // which reads as broken rather than aloof.
+    hoverAmt = clamp(hoverAmt + (inside && !dragging ? dt * 5 : -dt * 3), 0, 1);
+    if (inside && !wasInside) {
+      const h = headPoint();
+      spawn("spark", h.x + 18, h.y - 2, { colour: "#ffe9a8", life: 0.7, vy: -28 });
+      lastActivity = Date.now();
+    }
+    wasInside = inside;
+
+    // Petting: anywhere on the upper half counts as the head, and the movement
+    // threshold is low — a slow deliberate stroke should register, and it did
+    // not when the bar was set at a brisk flick.
+    const overHead = inside && cursor.ly < L.catY + 18 * L.scale;
+    if (S.behaviours.petting && overHead && cursor.speed > 0.5 && !dragging) {
+      petMeter = clamp(petMeter + dt * 1.8, 0, 1);
       lastActivity = Date.now();
     } else {
-      petMeter = clamp(petMeter - dt * 0.6, 0, 1);
+      petMeter = clamp(petMeter - dt * 0.5, 0, 1);
     }
     const purring = petMeter > 0.45;
     if (purring && Math.random() < dt * 6) {
@@ -285,6 +351,10 @@
     if (t < blinkUntil) lids = 1;
     if (sleepiness > 0.75) lids = 1;
     else if (purring || sleepiness > 0.4) lids = Math.max(lids, 0.5);
+    if (thinking) lids = Math.max(lids, 0.5); // squinting at the problem
+    // Being hovered wakes it up: a cat you are actively touching should not
+    // keep its sleepy half-lids.
+    if (hoverAmt > 0.4 && t >= blinkUntil && !purring) lids = 0;
 
     // --- pose ---
     // eye follow: normalise direction, keep pupils inside the sclera.
@@ -326,8 +396,12 @@
       squashY += e * 0.42;
       squashX -= e * 0.16;
     }
+    // hover: sit up a little straighter when noticed
+    squashY += hoverAmt * 0.05;
+    squashX -= hoverAmt * 0.02;
+
     // breathing, but only when otherwise still
-    const calm = 1 - Math.max(huntAmt, petMeter, dragging ? 1 : 0);
+    const calm = 1 - Math.max(huntAmt, petMeter, hoverAmt, dragging ? 1 : 0);
     squashY += Math.sin(t / 620) * 0.018 * calm;
 
     // position offsets
@@ -344,8 +418,14 @@
       oy -= Math.abs(Math.sin(p * Math.PI * 2)) * 26;
     }
     if (typing && S.behaviours.kneading) oy += Math.sin(t / 70) * 1.5;
+    oy -= hoverAmt * 3;
 
-    const mouth = huntAmt > 0.4 || heat > 0.6 ? "open" : purring ? "smile" : "neutral";
+    const mouth =
+      huntAmt > 0.4 || heat > 0.6
+        ? "open"
+        : purring || hoverAmt > 0.5
+          ? "smile"
+          : "neutral";
 
     const hit = cat.render(ctx, {
       x: L.catX + ox,
@@ -359,6 +439,27 @@
       squashY,
       knead: typing && S.behaviours.kneading ? (t % 320) / 320 : null,
     });
+
+    // --- thinking indicator ---
+    // Three dots cycling above the head while an agent works. Drawn with a
+    // dark plate behind each dot so it stays legible on a light desktop as
+    // well as a dark one — the cat can be sitting on anything.
+    if (thinking) {
+      const h = headPoint();
+      const s = Math.max(3, Math.round(L.scale * 1.4));
+      const step = Math.floor(t / 260) % 4;
+      for (let i = 0; i < 3; i++) {
+        const x = Math.round(h.x - s * 4 + i * s * 3) + ox;
+        const y = Math.round(h.y - s * 6) + oy;
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#14141a";
+        ctx.fillRect(x - 1, y - 1, s + 2, s + 2);
+        ctx.globalAlpha = step === i ? 1 : 0.35;
+        ctx.fillStyle = "#f4efe6";
+        ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // --- particles ---
     particles = particles.filter((p) => {

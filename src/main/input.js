@@ -79,8 +79,12 @@ function startCursor(onMove, hz = 60) {
     }
     if (!virtual) virtual = { x: native.x, y: native.y };
 
+    // The FIRST sample must not count as movement. Treating it as movement
+    // flipped `frozen` straight back to `native` on the very first poll, which
+    // re-enabled hit-testing against a cursor that never moves again — the cat
+    // then became click-through forever and could not be hovered or petted.
     const nativeMoved =
-      !lastNative || native.x !== lastNative.x || native.y !== lastNative.y;
+      !!lastNative && (native.x !== lastNative.x || native.y !== lastNative.y);
     lastNative = native;
 
     if (nativeMoved) {

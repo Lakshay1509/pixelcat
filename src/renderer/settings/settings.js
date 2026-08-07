@@ -22,6 +22,7 @@
     ["kneading", "Keyboard kneading"],
     ["overheat", "Overheat mode"],
     ["scrollUnroll", "Paper unroll"],
+    ["agentReactions", "AI agent reactions"],
   ];
 
   // Writes are debounced per-key so dragging a slider or typing a name doesn't
@@ -181,6 +182,13 @@
     const estimating = st.cursor === "evdev";
     $("gainRow").hidden = !estimating;
     $("gainNote").hidden = !estimating;
+
+    // Offer the one-click fix only when it is actually the missing piece.
+    $("grantInput").hidden = !(
+      window.pet.platform === "linux" &&
+      st.keyboard !== "ok" &&
+      st.keyboard !== "evdev"
+    );
   }
 
   // --- position ------------------------------------------------------------
@@ -261,6 +269,7 @@
     $("rounds").value = S.pomodoro.rounds;
     $("name").value = S.name || "";
     $("pinned").value = S.pinnedMessage || "";
+    $("agentNames").value = S.agentNames || "";
     $("alwaysOnTop").checked = S.alwaysOnTop;
     $("launchAtLogin").checked = S.launchAtLogin;
     $("tagline").textContent = S.name
@@ -323,6 +332,23 @@
       const v = Number(e.target.value);
       $("gainOut").textContent = `${v.toFixed(1)}x`;
       save({ pointerGain: v }, "gain");
+    });
+
+    $("agentNames").addEventListener("input", (e) =>
+      save({ agentNames: e.target.value }, "agentNames")
+    );
+
+    $("grantInput").addEventListener("click", async () => {
+      const btn = $("grantInput");
+      const out = $("grantResult");
+      btn.disabled = true;
+      btn.textContent = "WAITING FOR AUTHORISATION…";
+      const r = await window.pet.invoke("grant-input-access");
+      out.hidden = false;
+      out.textContent = r.message;
+      out.className = r.ok ? "note" : "note warn";
+      btn.disabled = false;
+      btn.textContent = "ENABLE FULL INPUT TRACKING";
     });
 
     $("pomoToggle").addEventListener("click", () =>

@@ -129,6 +129,37 @@ are why the cat can be half-asleep, blink, and still track your cursor.
 Squash-and-stretch pivots on the feet rather than the centre, so a squashed cat
 presses into the desk instead of floating.
 
+### AI agent reactions, without integrating with any agent
+
+The cat thinks along while Claude Code, Codex, Cursor, opencode, aider, goose
+and friends are working, and hops when they finish.
+
+There is no API for "is this agent thinking right now", so `src/main/agents.js`
+infers it from CPU: a matched agent process burning CPU is working; when it goes
+quiet, it has answered. One signal, no per-agent integration, and adding a new
+agent is one string in settings.
+
+Two details that decide whether this feels alive or broken:
+
+- **CPU time deltas, not instantaneous %CPU.** An agent streaming a reply uses
+  CPU in bursts, so a sampled percentage flickers between 0 and 40 constantly
+  and the cat twitches. Accumulated jiffies over the interval are smooth.
+- **Going idle is debounced (~3s).** Agents pause mid-answer waiting on the
+  network. Firing "done!" on every pause would be worse than not having it.
+
+On Linux it reads `/proc` directly — no process spawn, so polling at 1Hz doesn't
+become the CPU load it's trying to measure. Elsewhere it deltas `ps` CPU time.
+
+### Dragging uses relative deltas, never the global cursor
+
+Drag is driven by pointer capture and `movementX/Y` from the renderer, and main
+moves the window by those deltas. Absolute positioning against the global cursor
+looks simpler and breaks badly: on Wayland that cursor is frozen, so the cat
+teleports to one point, and a lost mouse-up leaves the drag latched — which
+silently overrides `setPosition`, making the position presets look broken.
+Pointer capture also guarantees move/up events keep arriving once the pointer
+leaves the window. A watchdog clears a stuck drag flag regardless.
+
 ### Reminders live in main
 
 Scheduling is wall-clock based (compared against `Date.now()`), not accumulated

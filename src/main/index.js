@@ -15,10 +15,13 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
+const { execFile } = require("child_process");
 
 const store = require("./store");
 const input = require("./input");
 const { Reminders } = require("./reminders");
+const { AgentWatcher } = require("./agents");
 const CatSprites = require("../renderer/pet/sprites.js");
 
 // Linux compositors need to be told we actually mean it about transparency.
@@ -34,7 +37,9 @@ let reminders = null;
 // Cursor-over-cat state
 let hitRect = null; // { x, y, w, h } in window-local px, published by the renderer
 let ignoring = null; // last value passed to setIgnoreMouseEvents; null = unset
-let drag = null; // { ox, oy } cursor offset inside the window while dragging
+let drag = false; // a drag gesture is in progress
+let dragSeen = 0; // last time we heard from it, for the stuck-drag watchdog
+let agents = null;
 
 // --- geometry ---------------------------------------------------------------
 // Window is deliberately larger than the cat: the padding is the stage it acts
@@ -63,6 +68,19 @@ function defaultPosition(l) {
 
 function send(channel, payload) {
   if (petWin && !petWin.isDestroyed()) petWin.webContents.send(channel, payload);
+}
+
+function applyAgentSettings() {
+  if (!agents) return;
+  const s = store.get();
+  agents.enabled = s.behaviours.agentReactions !== false;
+  agents.setAgents(
+    String(s.agentNames || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .concat(require("./agents").DEFAULT_AGENTS)
+  );
 }
 
 function displayInfo() {
@@ -242,10 +260,12 @@ function wireInput() {
   input.startCursor((p, dx, dy) => {
     if (!petWin || petWin.isDestroyed() || !petWin.isVisible()) return;
 
-    // Dragging wins over everything: reposition the window under the grab point.
-    if (drag) {
-      petWin.setPosition(Math.round(p.x - drag.ox), Math.round(p.y - drag.oy));
-    }
+    // Watchdog: a lost drag-end used to leave `drag` set forever, and the old
+    // code re-pinned the window to the cursor on every poll — which silently
+    // overrode setPosition, so the snap presets appeared to do nothing.
+    // Dragging no longer touches position here at all, but a stuck flag would
+    // still keep the window permanently interactive, so it self-clears.
+    if (drag && Date.now() - dragSeen > 2500) drag = false;
 
     const [wx, wy] = petWin.getPosition();
     const lx = p.x - wx;
@@ -292,13 +312,25 @@ function wireIpc() {
     hitRect = rect;
   });
 
-  ipcMain.on("drag-start", (_e, { ox, oy }) => {
-    drag = { ox, oy };
+  ipcMain.on("drag-start", () => {
+    drag = true;
+    dragSeen = Date.now();
     send("drag", { active: true });
   });
 
+  // Dragging moves the window by RELATIVE deltas from the renderer's pointer
+  // events, never by absolute cursor position. Wayland refuses to report the
+  // global cursor, so the old absolute scheme dragged the cat to a fixed point
+  // and pinned it there; movementX/Y is reported correctly everywhere.
+  ipcMain.on("drag-move", (_e, { dx, dy }) => {
+    dragSeen = Date.now();
+    if (!drag || !petWin || petWin.isDestroyed()) return;
+    const [x, y] = petWin.getPosition();
+    petWin.setPosition(Math.round(x + dx), Math.round(y + dy));
+  });
+
   ipcMain.on("drag-end", () => {
-    drag = null;
+    drag = false;
     send("drag", { active: false });
     if (petWin && !petWin.isDestroyed()) {
       const [x, y] = petWin.getPosition();
@@ -378,6 +410,7 @@ function wireIpc() {
       store.set({ position: { x, y } });
     }
     if (patch.reminders) reminders.resetCadence();
+    if (patch.agentNames !== undefined || patch.behaviours) applyAgentSettings();
 
     sendSettings();
     refreshTrayMenu();
@@ -385,6 +418,33 @@ function wireIpc() {
   });
 
   ipcMain.handle("get-input-status", () => input.status);
+
+  // Linux only: adding the user to the `input` group is what makes global
+  // typing detection possible under Wayland. It needs privilege, so it is an
+  // explicit button that raises the system's own auth prompt — never silent.
+  ipcMain.handle("grant-input-access", () => {
+    if (process.platform !== "linux") {
+      return { ok: false, message: "Only needed on Linux." };
+    }
+    const user = os.userInfo().username;
+    return new Promise((resolve) => {
+      execFile("pkexec", ["usermod", "-aG", "input", user], { timeout: 120000 }, (err, _o, stderr) => {
+        if (err) {
+          const cancelled = err.code === 126 || err.code === 127;
+          return resolve({
+            ok: false,
+            message: cancelled
+              ? "Cancelled, or pkexec is unavailable. You can run it yourself: sudo usermod -aG input $USER"
+              : String(stderr || err.message).trim(),
+          });
+        }
+        resolve({
+          ok: true,
+          message: `Added ${user} to the input group. Log out and back in to finish.`,
+        });
+      });
+    });
+  });
 
   ipcMain.handle("get-catalog", () => ({
     palettes: Object.entries(CatSprites.PALETTES).map(([id, p]) => ({
@@ -411,6 +471,10 @@ if (!app.requestSingleInstanceLock()) {
 
     reminders = new Reminders((channel, payload) => send(channel, payload));
     reminders.start();
+
+    agents = new AgentWatcher((channel, payload) => send(channel, payload));
+    applyAgentSettings();
+    agents.start();
 
     wireIpc();
 
@@ -440,5 +504,6 @@ if (!app.requestSingleInstanceLock()) {
     input.stopCursor();
     input.stopGlobal();
     if (reminders) reminders.stop();
+    if (agents) agents.stop();
   });
 }
