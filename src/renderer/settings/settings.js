@@ -354,6 +354,9 @@
     $("pomoToggle").addEventListener("click", () =>
       window.pet.send("action", { type: "pomodoro-toggle" })
     );
+    $("pomoReset").addEventListener("click", () =>
+      window.pet.send("action", { type: "pomodoro-reset" })
+    );
 
     $("msgAdd").addEventListener("click", () => {
       const time = $("msgTime").value;
@@ -368,6 +371,27 @@
       save({ messages: S.messages }, "messages");
     });
   }
+
+  /*
+   * The pomodoro clock lives here now. The cat used to carry a FOCUS/00:00
+   * banner and was the only thing that knew the time or could stop a round;
+   * this window's button said "START POMODORO" whether or not one was running,
+   * because it was never told. It is now on the same one-second feed as the pet.
+   */
+  window.pet.on("pomodoro", (p) => {
+    const running = p && p.phase && p.phase !== "idle";
+    $("pomoToggle").textContent = running ? "STOP POMODORO" : "START POMODORO";
+    $("pomoReset").hidden = !running;
+    if (!running) {
+      $("pomoStatus").textContent = "Not running.";
+      return;
+    }
+    const secs = Math.max(0, Math.round(p.remainingMs / 1000));
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    const rounds = S && S.pomodoro && S.pomodoro.rounds ? ` of ${S.pomodoro.rounds}` : "";
+    $("pomoStatus").textContent =
+      `${p.phase === "focus" ? "Focus" : "Break"} — ${clock} left · round ${p.round}${rounds}`;
+  });
 
   // The pet window can change settings too (tray menu), so stay in sync — but
   // every save echoes back, and re-filling a control the user is currently

@@ -12,7 +12,6 @@
   const cvs = document.getElementById("stage");
   const ctx = cvs.getContext("2d");
   const bubbleEl = document.getElementById("bubble");
-  const timerEl = document.getElementById("timer");
   const pinEl = document.getElementById("pin");
   const cat = new CatRenderer();
   const A = CatSprites.ANCHORS;
@@ -38,6 +37,7 @@
   let hoverAmt = 0; // 0..1 "I noticed you" perk-up
   let wasInside = false;
   let thinking = false; // an AI agent is working
+  let pomoPhase = "idle"; // "focus" while a round runs: the cat wears the band
   // Peek mode. `peekTo` is where main wants the sprite slid to; `peekAmt` eases
   // towards it so the cat walks off the edge rather than teleporting.
   let peekTo = { x: 0, y: 0 };
@@ -175,17 +175,14 @@
     if (kind === "pomodoro") jumpUntil = now() + 700;
   });
 
+  /*
+   * The pomodoro is worn, not displayed. `phase` is the only thing kept: the cat
+   * puts a headband on for a focus round and takes it off for the break, which
+   * is the whole readout. The countdown lives in settings and the tray menu,
+   * where a clock belongs — see cat.js paintBand for why the banner went.
+   */
   window.pet.on("pomodoro", (p) => {
-    if (!p || p.phase === "idle") {
-      timerEl.classList.remove("show");
-      return;
-    }
-    const secs = Math.max(0, Math.round(p.remainingMs / 1000));
-    const mm = String(Math.floor(secs / 60)).padStart(2, "0");
-    const ss = String(secs % 60).padStart(2, "0");
-    timerEl.textContent = `${p.phase === "focus" ? "FOCUS" : "BREAK"} ${mm}:${ss}`;
-    timerEl.dataset.phase = p.phase;
-    timerEl.classList.add("show");
+    pomoPhase = p && p.phase ? p.phase : "idle";
   });
 
   window.pet.on("agent", ({ state, name, quiet }) => {
@@ -259,7 +256,6 @@
     e.preventDefault();
     if (overCat(e)) window.pet.send("action", { type: "menu" });
   });
-  timerEl.addEventListener("click", () => window.pet.send("action", { type: "pomodoro-toggle" }));
   cvs.addEventListener("dblclick", (e) => {
     if (overCat(e)) window.pet.send("open-settings");
   });
@@ -568,6 +564,11 @@
     if (sleepiness > 0.75) lids = 1;
     else if (purring || sleepiness > 0.4) lids = Math.max(lids, 0.5);
     if (thinking) lids = Math.max(lids, 0.5); // squinting at the problem
+    // Focus round: the same narrowed eyes, for the same reason. Applied through
+    // max() rather than assignment so blinking still happens — a cat that never
+    // blinks for 25 minutes is a stare, not concentration.
+    const focusing = pomoPhase === "focus";
+    if (focusing) lids = Math.max(lids, 0.5);
     // Being hovered wakes it up: a cat you are actively touching should not
     // keep its sleepy half-lids.
     if (hoverAmt > 0.4 && t >= blinkUntil && !purring) lids = 0;
@@ -611,6 +612,9 @@
     if (typing && S.behaviours.kneading) oy += Math.sin(t / 70) * 1.5;
     oy -= hoverAmt * 3;
 
+    // Focus needs nothing here: neutral is already the resting mouth, and being
+    // petted should still win over it — refusing to smile at someone stroking
+    // the cat would be a worse bug than losing the mood for a moment.
     const mouth = heat > 0.6 ? "open" : purring || hoverAmt > 0.5 ? "smile" : "neutral";
 
     /*
@@ -641,6 +645,7 @@
       squashX,
       squashY,
       knead: typing && S.behaviours.kneading ? (t % 320) / 320 : null,
+      band: focusing,
     });
 
     /*

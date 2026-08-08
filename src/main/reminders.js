@@ -121,9 +121,28 @@ class Reminders {
     this.emit("pomodoro", { ...this.pomo, remainingMs: 0 });
   }
 
+  /*
+   * Restarts the phase you are in, not the whole cycle. The reason to reach for
+   * reset is an interruption partway through a round, and throwing away the
+   * rounds already banked would be a strange punishment for being interrupted.
+   */
+  resetPomodoro() {
+    if (this.pomo.phase === PHASE.IDLE) return;
+    const s = store.get();
+    const mins = this.pomo.phase === PHASE.FOCUS ? s.pomodoro.focusMin : s.pomodoro.breakMin;
+    this.pomo.endsAt = Date.now() + Math.max(1, mins) * 60_000;
+    this.emit("pomodoro", this.pomoState());
+  }
+
   togglePomodoro() {
     if (this.pomo.phase === PHASE.IDLE) this.startPomodoro();
     else this.stopPomodoro();
+  }
+
+  // The menus and the settings window both need "what is it doing right now",
+  // and neither can wait for the next one-second tick to find out.
+  pomoState() {
+    return { ...this.pomo, remainingMs: Math.max(0, this.pomo.endsAt - Date.now()) };
   }
 
   // A cat that says the same sentence every 45 minutes stops being a pet and

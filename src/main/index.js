@@ -400,7 +400,12 @@ function openSettings() {
     },
   });
   settingsWin.loadFile(path.join(__dirname, "../renderer/settings/index.html"));
-  settingsWin.webContents.on("did-finish-load", sendSettings);
+  settingsWin.webContents.on("did-finish-load", () => {
+    sendSettings();
+    // Opened mid-round, the window would otherwise show "not running" until the
+    // next tick — and show it wrongly for up to a second on every open.
+    if (reminders) settingsWin.webContents.send("pomodoro", reminders.pomoState());
+  });
   settingsWin.on("closed", () => {
     settingsWin = null;
   });
@@ -423,19 +428,39 @@ function buildTray() {
   tray.on("click", () => openSettings());
 }
 
+/*
+ * Both menus get these from one place. They used to be written out twice with
+ * only the tray copy kept in sync, so the cat's own right-click menu could offer
+ * "Start Pomodoro" during a round.
+ */
+function pomodoroMenuItems() {
+  if (!reminders) return [];
+  const p = reminders.pomoState();
+  if (p.phase === "idle") {
+    return [{ label: "Start Pomodoro", click: () => { reminders.startPomodoro(); refreshTrayMenu(); } }];
+  }
+  /*
+   * Minutes, not mm:ss. A tray menu is a STATIC menu — setContextMenu paints it
+   * once — so a seconds countdown in it would simply freeze at whatever it read
+   * when the menu was last rebuilt, which is worse than being coarse. Rounded up
+   * so it says "1 min left" until it is actually over. The settings window has
+   * the second-by-second clock.
+   */
+  const mins = Math.ceil(p.remainingMs / 60000);
+  return [
+    { label: `${p.phase === "focus" ? "Focus" : "Break"} — ${mins} min left`, enabled: false },
+    { label: "Reset this round", click: () => { reminders.resetPomodoro(); refreshTrayMenu(); } },
+    { label: "Stop Pomodoro", click: () => { reminders.stopPomodoro(); refreshTrayMenu(); } },
+  ];
+}
+
 function refreshTrayMenu() {
   if (!tray) return;
   const s = store.get();
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Settings…", click: openSettings },
-      {
-        label: reminders && reminders.pomo.phase !== "idle" ? "Stop Pomodoro" : "Start Pomodoro",
-        click: () => {
-          reminders.togglePomodoro();
-          refreshTrayMenu();
-        },
-      },
+      ...pomodoroMenuItems(),
       { type: "separator" },
       {
         label: "Always on top",
@@ -537,10 +562,7 @@ function wireIpc() {
       case "menu":
         Menu.buildFromTemplate([
           { label: "Settings…", click: openSettings },
-          {
-            label: reminders.pomo.phase !== "idle" ? "Stop Pomodoro" : "Start Pomodoro",
-            click: () => reminders.togglePomodoro(),
-          },
+          ...pomodoroMenuItems(),
           { type: "separator" },
           { label: "Hide cat", click: () => petWin && petWin.hide() },
           { label: "Quit", click: () => app.quit() },
@@ -548,6 +570,10 @@ function wireIpc() {
         break;
       case "pomodoro-toggle":
         reminders.togglePomodoro();
+        refreshTrayMenu();
+        break;
+      case "pomodoro-reset":
+        reminders.resetPomodoro();
         refreshTrayMenu();
         break;
     }
@@ -635,7 +661,29 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (process.platform === "darwin" && app.dock) app.dock.hide();
 
-    reminders = new Reminders((channel, payload) => send(channel, payload));
+    /*
+     * Pomodoro state goes to the settings window as well as the pet. The pet
+     * used to carry a FOCUS/00:00 banner and was the only thing that knew the
+     * time; now it just wears a headband, so the clock and the controls live in
+     * settings and it needs the live feed rather than a snapshot from whenever
+     * it happened to open.
+     */
+    let trayShows = ""; // what the tray's static menu currently claims
+    reminders = new Reminders((channel, payload) => {
+      send(channel, payload);
+      if (channel !== "pomodoro") return;
+      if (settingsWin && !settingsWin.isDestroyed()) {
+        settingsWin.webContents.send(channel, payload);
+      }
+      // Rebuild the tray only when its minute-resolution label would actually
+      // change. Doing it on every one-second tick would repaint the menu sixty
+      // times an hour for nothing, and on Linux tray implementations rebuilding
+      // an open menu is not always harmless.
+      const shows = `${payload.phase}:${Math.ceil(payload.remainingMs / 60000)}`;
+      if (shows === trayShows) return;
+      trayShows = shows;
+      refreshTrayMenu();
+    });
     reminders.start();
 
     agents = new AgentWatcher((channel, payload) => send(channel, payload));

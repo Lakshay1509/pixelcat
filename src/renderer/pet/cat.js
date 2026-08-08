@@ -151,11 +151,18 @@
         N: S.BASE_SLOTS.N,
         E: "#ffffff",
         P: "#191919",
+        // Headband. Fixed rather than palette-derived: it has to stay legible on
+        // a snow cat and a void cat alike, and the whole point of it is to be
+        // the one thing on the sprite that is not the cat.
+        R: "#d8384a",
+        W: "#f4efe6",
       };
       const out = {};
       for (const [k, v] of Object.entries(c)) {
         let rgb = hex(v);
-        if (tint > 0 && k !== "O" && k !== "E" && k !== "P") {
+        // The band and its knot are cloth, not fur, so overheat does not blush
+        // them — same reason the eyes and outline are left alone.
+        if (tint > 0 && k !== "O" && k !== "E" && k !== "P" && k !== "R" && k !== "W") {
           // Overheat: push fur toward hot red, leave eyes and outline alone so
           // the face stays readable at full blush.
           const t = Math.min(1, tint) * 0.75;
@@ -225,6 +232,47 @@
       }
     }
 
+    /*
+     * The focus headband, worn while a pomodoro focus round is running.
+     *
+     * It replaces a FOCUS/00:00 banner that sat beside the cat. The banner was
+     * the only thing on screen that looked like a piece of UI rather than a pet,
+     * and it told you the one thing a clock already tells you. The band says the
+     * same thing — heads down — in the cat's own vocabulary.
+     *
+     * Painted over fur slots only, never the generated outline: filling whole
+     * rows would eat the rim the sprite needs to stay legible against an
+     * arbitrary desktop, and a cat with a bite out of its head reads as a
+     * rendering bug rather than an accessory.
+     */
+    paintBand(g) {
+      for (const y of [7, 8]) {
+        for (let x = 0; x < S.W; x++) {
+          const ch = g[y][x];
+          if (ch === "B" || ch === "M") g[y][x] = "R";
+        }
+        // The emblem, centred on the mirror axis the whole sprite is built on.
+        for (let x = 14; x <= 17; x++) if (g[y][x] === "R") g[y][x] = "W";
+      }
+      /*
+       * Knot and tail, off the right temple. These are the one place anything
+       * adds pixels OUTSIDE the silhouette — patterns are forbidden from it, but
+       * an accessory that stops at the skull is just a stripe. They may overwrite
+       * the outline, because the knot is in front of the head edge; without that
+       * the band detaches and floats.
+       */
+      const knot = [
+        [8, 29], [8, 30],
+        [9, 29], [9, 30],
+        [10, 30], [10, 31],
+        [11, 31],
+      ];
+      for (const [y, x] of knot) {
+        if (y >= S.H || x >= S.W) continue;
+        if (g[y][x] === "." || g[y][x] === "O") g[y][x] = "R";
+      }
+    }
+
     // Kneading paws: two little mitts alternating below the chest.
     paintKnead(g, phase) {
       const lift = phase < 0.5 ? [0, 2] : [2, 0];
@@ -250,6 +298,7 @@
       } = opts;
 
       const g = this.base.map((r) => r.slice());
+      if (opts.band) this.paintBand(g);
       this.paintFace(g, opts);
       if (knead !== null) this.paintKnead(g, knead);
 

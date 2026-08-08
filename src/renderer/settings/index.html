@@ -96,7 +96,11 @@
           <span class="lbl">Rounds</span>
           <input type="number" id="rounds" min="1" max="12" class="mins" />
         </div>
-        <button id="pomoToggle" class="btn">START POMODORO</button>
+        <p class="note" id="pomoStatus">Not running.</p>
+        <div class="row">
+          <button id="pomoToggle" class="btn">START POMODORO</button>
+          <button id="pomoReset" class="btn" hidden>RESET ROUND</button>
+        </div>
       </section>
 
       <section>

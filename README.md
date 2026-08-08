@@ -230,6 +230,43 @@ cycle runs backwards when it rolls the other way. Its silhouette is a real circl
 rather than a square with the corners knocked off, which at 7px is the whole
 difference between a ball and a die.
 
+### The pomodoro is worn, not displayed
+
+A focus round used to put a `FOCUS 24:51` banner beside the cat. It was the only
+thing on screen that looked like a piece of UI rather than a pet, and it spent
+that space telling you something a clock already tells you.
+
+Now the cat puts a **headband** on for a focus round and takes it off for the
+break. That is the entire readout, and it says the one thing worth saying —
+heads down — in the cat's own vocabulary. It comes with the same narrowed eyes
+the cat uses when an agent is working, applied through `max()` so the cat still
+blinks: never blinking for 25 minutes is a stare, not concentration.
+
+The band is painted over fur slots only, never the generated outline — filling
+whole rows would eat the rim the sprite needs to stay legible against an
+arbitrary desktop. Its knot is the one place anything adds pixels *outside* the
+silhouette, which patterns are forbidden from doing, because an accessory that
+stops at the skull is just a stripe.
+
+Removing the banner meant removing a control, though: clicking it was the only
+way to stop a running round, and the settings window's button said
+`START POMODORO` whether or not one was running, because nothing ever told it
+otherwise. So the clock and the controls moved somewhere a clock belongs:
+
+- **Settings** shows `Focus — 12:34 left · round 2 of 4` on the same one-second
+  feed the cat gets, with `STOP POMODORO` and `RESET ROUND`.
+- **Reset restarts the phase you are in**, not the whole cycle. The reason to
+  reach for it is an interruption partway through a round, and throwing away the
+  rounds already banked would be a strange punishment for being interrupted.
+- **The tray menu counts in minutes, not `mm:ss`.** A tray menu is a *static*
+  menu — `setContextMenu` paints it once — so a seconds countdown would freeze at
+  whatever it read when the menu was last built. It is rebuilt only when the
+  minute actually changes, rather than sixty times an hour for nothing.
+
+Both menus draw their pomodoro entries from one function. They were written out
+twice before, with only the tray copy kept in sync, so the cat's own right-click
+menu could offer "Start Pomodoro" in the middle of a round.
+
 ### Position means the CAT, not its window
 
 `settings.position` is the sprite's own top-left on screen. The window is larger
