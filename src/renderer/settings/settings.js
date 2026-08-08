@@ -17,12 +17,12 @@
 
   const BEHAVIOURS = [
     ["eyeFollow", "Eye follow"],
-    ["mouseHunt", "Mouse hunt"],
     ["petting", "Purring pets"],
     ["kneading", "Keyboard kneading"],
     ["overheat", "Overheat mode"],
-    ["scrollUnroll", "Paper unroll"],
+    ["scrollUnroll", "Yarn ball on scroll"],
     ["agentReactions", "AI agent reactions"],
+    ["peekMode", "Peek while watching"],
   ];
 
   // Writes are debounced per-key so dragging a slider or typing a name doesn't
@@ -173,15 +173,18 @@
         : st.keyboard === "evdev"
           ? "Typing: detected via /dev/input"
           : "Typing: unavailable";
-    const cursor = st.cursor === "evdev" ? "Cursor: estimated" : "Cursor: tracked";
+    // Three states, not two: `frozen` used to fall through to "tracked", which
+    // claimed the one thing that was definitely not happening.
+    const cursor =
+      st.cursor === "native"
+        ? "Cursor: tracked"
+        : st.cursor === "evdev"
+          ? "Cursor: estimated"
+          : "Cursor: not tracked";
 
     el.textContent = `${typing} · ${cursor}${st.detail ? ` — ${st.detail}` : ""}`;
     el.className =
       st.keyboard === "ok" || st.keyboard === "evdev" ? "note" : "note warn";
-
-    const estimating = st.cursor === "evdev";
-    $("gainRow").hidden = !estimating;
-    $("gainNote").hidden = !estimating;
 
     // Offer the one-click fix only when it is actually the missing piece.
     $("grantInput").hidden = !(
@@ -263,8 +266,6 @@
       $("posX").value = S.position.x;
       $("posY").value = S.position.y;
     }
-    $("gain").value = S.pointerGain ?? 1;
-    $("gainOut").textContent = `${Number(S.pointerGain ?? 1).toFixed(1)}x`;
     $("stretchOn").checked = S.reminders.stretch.enabled;
     $("stretchMin").value = S.reminders.stretch.everyMin;
     $("waterOn").checked = S.reminders.water.enabled;
@@ -332,12 +333,6 @@
     });
     $("posX").addEventListener("change", () => save({ position: readPos() }, "position"));
     $("posY").addEventListener("change", () => save({ position: readPos() }, "position"));
-
-    $("gain").addEventListener("input", (e) => {
-      const v = Number(e.target.value);
-      $("gainOut").textContent = `${v.toFixed(1)}x`;
-      save({ pointerGain: v }, "gain");
-    });
 
     $("agentNames").addEventListener("input", (e) =>
       save({ agentNames: e.target.value }, "agentNames")

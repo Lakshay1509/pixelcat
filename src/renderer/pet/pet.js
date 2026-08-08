@@ -25,7 +25,7 @@
   let catX = 0;
   let catY = 0;
 
-  const cursor = { lx: -9999, ly: -9999, speed: 0, dragging: false };
+  const cursor = { lx: -9999, ly: -9999, speed: 0 };
   let particles = [];
   let lastRect = null; // cat bounds from the previous frame, for hit testing
   let staleMode = false; // true when main has no usable global cursor
@@ -34,21 +34,21 @@
   // drives
   let heat = 0; // 0..1 overheat blush
   let petMeter = 0; // 0..1 purring
-  let huntAmt = 0; // 0..1 pounce lean
   let sleepiness = 0; // 0..1
   let hoverAmt = 0; // 0..1 "I noticed you" perk-up
   let wasInside = false;
   let thinking = false; // an AI agent is working
+  // Peek mode. `peekTo` is where main wants the sprite slid to; `peekAmt` eases
+  // towards it so the cat walks off the edge rather than teleporting.
+  let peekTo = { x: 0, y: 0 };
+  let peekAmt = 0;
+  let peekWanted = 0;
 
   let lastKey = 0;
   let keyTimes = [];
   let lastActivity = Date.now();
   let blinkNext = performance.now() + 2000;
   let blinkUntil = 0;
-  let dragging = false;
-  let dragVel = { x: 0, y: 0 };
-  let lastCursor = { lx: 0, ly: 0 };
-  let wobble = 0;
   let stretchUntil = 0;
   let jumpUntil = 0;
   let bubbleTimer = null;
@@ -56,7 +56,6 @@
 
   const now = () => performance.now();
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp = (a, b, t) => a + (b - a) * t;
 
   // --- setup ---------------------------------------------------------------
   function applySettings(s) {
@@ -91,17 +90,29 @@
    */
   let localAt = -1e9;
   let localPrev = null;
+  // When cursor.speed was last set by ANY source. Pointer events stop arriving
+  // the moment a hand stops moving, so without this the last speed stands
+  // forever: a hand resting on the cat's head would pet it indefinitely, and a
+  // fast flick that ended over the cat would leave it pouncing for good.
+  let speedAt = -1e9;
 
   window.pet.on("cursor", (c) => {
-    cursor.dragging = c.dragging;
-    staleMode = !!c.stale;
+    // `exact` means the display server reported a real point. A dead-reckoned
+    // one (Wayland + /dev/input) is close enough to know the mouse is MOVING and
+    // nowhere near close enough to say which pixel it is on — so it is treated
+    // like no position at all rather than trusted a few hundred px off, which
+    // made the cat stop registering a hand resting on it 400ms after the last
+    // local event and drop the pet meter mid-stroke.
+    staleMode = !c.exact;
     if (typeof c.wy === "number") winY = c.wy;
-    if (c.stale) return; // position is meaningless; local events are all we have
+    // Global movement still counts as being awake even when we cannot place it.
+    if (c.speed > 2) lastActivity = Date.now();
+    if (!c.exact) return; // position is an estimate; local events are all we trust
     if (now() - localAt < 400) return; // a real pointer event is more accurate
     cursor.lx = c.lx;
     cursor.ly = c.ly;
     cursor.speed = c.speed;
-    if (c.speed > 2) lastActivity = Date.now();
+    speedAt = now();
   });
 
   window.addEventListener("mousemove", (e) => {
@@ -112,12 +123,28 @@
       const dt = Math.max(8, t - localPrev.t);
       // normalise to per-16ms so it shares a scale with main's polled speed
       cursor.speed = (Math.hypot(lx - localPrev.x, ly - localPrev.y) / dt) * 16;
+      speedAt = t;
     }
     localPrev = { x: lx, y: ly, t };
     cursor.lx = lx;
     cursor.ly = ly;
     localAt = t;
     lastActivity = Date.now();
+  });
+
+  // Without a trustworthy global cursor the last local point is all we have, and
+  // it does not expire on its own: walk the pointer off the cat and the stale
+  // coordinate is still sitting on it, so the cat stays perked up and purring at
+  // nobody. Leaving the window means "the pointer is elsewhere", so say so.
+  document.addEventListener("mouseleave", () => {
+    cursor.lx = -9999;
+    cursor.ly = -9999;
+    cursor.speed = 0;
+    localPrev = null;
+    // Expire the local sample too. Parking it far off-screen without this left
+    // the gaze treating (-9999,-9999) as a real target, so the cat rolled its
+    // eyes hard to the top-left for the 1.8s the sample stayed "fresh".
+    localAt = -1e9;
   });
 
   window.pet.on("key", () => {
@@ -127,15 +154,19 @@
     lastActivity = Date.now();
   });
 
-  window.pet.on("wheel", () => {
+  window.pet.on("wheel", (e) => {
     if (!S || !S.behaviours.scrollUnroll) return;
+    if (peekAmt > 0.5) return; // nothing rolling across someone's video
     lastActivity = Date.now();
-    spawnPaper();
+    // Scroll direction picks the side it rolls to. A wheel that reports no
+    // rotation at all still gets a bat — whichever way it is already going.
+    const rot = (e && e.rotation) || 0;
+    batYarn(rot ? Math.sign(rot) : yarn.vx >= 0 ? 1 : -1);
   });
 
-  window.pet.on("drag", ({ active }) => {
-    dragging = active;
-    if (!active) wobble = 1;
+  window.pet.on("peek", ({ active, shift }) => {
+    peekWanted = active ? 1 : 0;
+    if (active && shift) peekTo = shift;
   });
 
   window.pet.on("say", ({ text, kind, ms }) => {
@@ -157,13 +188,23 @@
     timerEl.classList.add("show");
   });
 
-  window.pet.on("agent", ({ state, name }) => {
+  window.pet.on("agent", ({ state, name, quiet }) => {
     if (!S || S.behaviours.agentReactions === false) return;
+    // Peeking means staying out of the way of whatever is playing. Reminders
+    // are the exception — they are the reason you asked for a pet — but an
+    // agent finishing is not worth hopping across a film for.
+    if (peekAmt > 0.5 && state !== "thinking") {
+      thinking = false;
+      return;
+    }
     if (state === "thinking") {
       thinking = true;
       return;
     }
     thinking = false;
+    // A gap main is not confident was the end of the turn: stop squinting, but
+    // do not celebrate. Otherwise one answer is announced once per tool call.
+    if (quiet) return;
     jumpUntil = now() + 900; // the happy hop
     say(`${name || "agent"} finished!`, "agent", 6000);
     const h = headPoint();
@@ -187,57 +228,63 @@
   // These only fire while the window is NOT click-through, i.e. while the cursor
   // is genuinely over the cat — main flips that for us.
   /*
-   * Drag via pointer capture and RELATIVE deltas.
+   * The cat is NOT draggable, by design — it is placed by coordinate.
    *
-   * The previous version sent an absolute grab offset and let main pin the
-   * window to the global cursor — which is frozen on Wayland, so the cat teleported
-   * to one spot and stuck there, overriding the position presets. Pointer capture
-   * also guarantees we still receive move/up events once the pointer leaves the
-   * window, which is what used to strand the drag flag set forever.
+   * Dragging steered the window by relative pointer deltas, and near a screen
+   * edge that fought the two constraints below it: the compositor clamps a window
+   * that would leave the screen, and the sprite's offset inside its own window
+   * (`catOffset`, what lets it reach a true edge at all) is only recomputed when
+   * a position is committed. So past an invisible line the window stopped moving
+   * while the cat kept a stale offset, and it visibly came unstuck from the
+   * pointer. Setting X/Y goes through placeCat, which solves both together.
    */
-  let dragLocal = false;
+  /*
+   * Both of these ask "is the pointer on the CAT", not "is it in the window".
+   *
+   * The canvas fills the whole window, and the window is deliberately larger
+   * than the sprite. Wherever the window has to stay interactive (any session
+   * without an exact global cursor) that padding is live too, so binding these
+   * to the window meant a right-click or double-click in the empty space beside
+   * the cat opened its menu or its settings — from a spot that looks like
+   * desktop. lastRect is the sprite's own bounds from the last frame.
+   */
+  const overCat = (e) =>
+    !!lastRect &&
+    e.clientX >= lastRect.x &&
+    e.clientX <= lastRect.x + lastRect.w &&
+    e.clientY >= lastRect.y &&
+    e.clientY <= lastRect.y + lastRect.h;
 
-  cvs.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    dragLocal = true;
-    try {
-      cvs.setPointerCapture(e.pointerId);
-    } catch {}
-    window.pet.send("drag-start");
-  });
-
-  cvs.addEventListener("pointermove", (e) => {
-    if (!dragLocal) return;
-    if (e.movementX || e.movementY)
-      window.pet.send("drag-move", { dx: e.movementX, dy: e.movementY });
-  });
-
-  const endDrag = (e) => {
-    if (!dragLocal) return;
-    dragLocal = false;
-    try {
-      if (e && e.pointerId !== undefined) cvs.releasePointerCapture(e.pointerId);
-    } catch {}
-    window.pet.send("drag-end");
-  };
-  cvs.addEventListener("pointerup", endDrag);
-  cvs.addEventListener("pointercancel", endDrag);
-  window.addEventListener("blur", () => endDrag(null));
   window.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    window.pet.send("action", { type: "menu" });
+    if (overCat(e)) window.pet.send("action", { type: "menu" });
   });
   timerEl.addEventListener("click", () => window.pet.send("action", { type: "pomodoro-toggle" }));
-  cvs.addEventListener("dblclick", () => window.pet.send("open-settings"));
+  cvs.addEventListener("dblclick", (e) => {
+    if (overCat(e)) window.pet.send("open-settings");
+  });
 
   // --- particles -----------------------------------------------------------
   function spawn(kind, x, y, opts = {}) {
+    let vy = opts.vy ?? -30 - Math.random() * 20;
+    /*
+     * Almost everything the cat emits — hearts, steam, zzz, the notice-you spark
+     * — spawns at its head and floats up. Sat flush against the top of the
+     * screen there is no canvas above its head, so all of it rose straight out
+     * of view: you could pet the cat and get no hearts, no purring cue, nothing,
+     * which is indistinguishable from petting being broken. Keep the origin
+     * on-canvas and send it the other way instead.
+     */
+    if (y < 12) {
+      y = Math.max(2, y);
+      if (vy < 0) vy = -vy;
+    }
     particles.push({
       kind,
       x,
       y,
       vx: opts.vx ?? (Math.random() - 0.5) * 20,
-      vy: opts.vy ?? -30 - Math.random() * 20,
+      vy,
       life: opts.life ?? 1.2,
       max: opts.life ?? 1.2,
       colour: opts.colour ?? "#ffffff",
@@ -252,14 +299,164 @@
     };
   }
 
-  function spawnPaper() {
-    const h = headPoint();
-    spawn("paper", h.x + (Math.random() - 0.5) * 30, h.y + 40, {
-      colour: "#f4efe6",
-      vy: 20 + Math.random() * 20,
-      vx: (Math.random() - 0.5) * 40,
-      life: 1.0,
-    });
+  /*
+   * --- the yarn ball -------------------------------------------------------
+   *
+   * Scrolling bats a ball of yarn along the desk. A thread unspools back to the
+   * cat's paws, and when you stop scrolling the thread reels it in and it
+   * settles again beside the cat.
+   *
+   * It is ONE ball on a spring, not a stream of particles, and that is the whole
+   * idea. What this replaces spawned a paper rectangle per wheel tick and threw
+   * it downward under gravity, so a long scroll buried the desk in rectangles
+   * that all fell out of frame: nothing to look at on the way, nothing left
+   * afterwards, and a mess in between. A single ball that comes back gives the
+   * scroll somewhere to go and something to watch it do.
+   *
+   * The spring is also what keeps the effect on-canvas. There is only 60px of
+   * padding either side of the cat, so anything launched freely is off the edge
+   * within a few frames — the return trip is not decoration, it is what makes
+   * the ball stay somewhere it can be seen.
+   */
+  const yarn = {
+    on: false,
+    x: 0, // canvas px, centre of the ball
+    vx: 0,
+    hop: 0, // height above the ground line, never negative
+    hopV: 0,
+    roll: 0, // accumulated rotation, in frames
+    life: 0,
+    fade: 0, // eases in on the first bat so it does not just appear
+  };
+
+  /*
+   * Tuned against the real canvas, not by feel. Travel and settling time pull
+   * against each other — a spring soft enough to let the ball run is a spring
+   * too slow to reel it back before the ball fades out — and the spring constant
+   * turns out to matter far less than the impulse cap and the drag. This trio
+   * gets the ball right across the cat (~120px of a 248px canvas) and back to
+   * rest 2.5s after the last scroll, just as it starts fading.
+   */
+  const YARN_LIFE = 2.6; // seconds of stillness before it is put away
+  const YARN_SPRING = 4.5; // thread tension pulling it home
+  const YARN_FRICTION = 3.2; // desk drag, and what stops it oscillating forever
+  const YARN_BODY = "#e07a8c";
+  const YARN_WRAP = "#ffd3dc";
+
+  // Sized off the cat so the ball looks the same at every scale.
+  const yarnScale = () => Math.max(2, Math.round(L.scale * 0.85));
+  const yarnRadius = () => (7 * yarnScale()) / 2;
+
+  /*
+   * Where it rests: tucked against the cat's flank by the tail, clear of the
+   * sprite. Parking it in front of the paws instead was tried and covers the
+   * belly markings the whole time it is out — the ball is 21px and the cat only
+   * 128px, so sitting on the body is not a small intrusion.
+   *
+   * That leaves the two directions lopsided: it is a short bump into the wall
+   * one way and a long run across the cat the other. That is fine, and better
+   * than the alternative — both directions being short.
+   */
+  const yarnHome = (cx) => cx + (CatSprites.W + 1) * L.scale;
+  // The floor the ball rolls on: the cat's feet, not its paws anchor. That
+  // anchor is where kneading is drawn, a good bit up the body, and a ball
+  // resting there sits on the belly markings instead of on the desk.
+  const yarnGround = (cy) => cy + (A.paws.y + 1.5) * L.scale;
+
+  function batYarn(dir) {
+    if (!yarn.on) {
+      yarn.on = true;
+      yarn.x = yarnHome(catX);
+      yarn.vx = 0;
+      yarn.hop = 0;
+      yarn.hopV = 0;
+      yarn.roll = 0;
+      yarn.fade = 0;
+    }
+    yarn.life = YARN_LIFE;
+    yarn.vx = clamp(yarn.vx + dir * 26 * L.scale, -90 * L.scale, 90 * L.scale);
+    // A little hop on each bat, but only off the ground — kicking a ball that is
+    // already in the air reads as it being yanked, not batted.
+    if (yarn.hop <= 0.5) yarn.hopV = 40 * L.scale;
+  }
+
+  function updateYarn(dt, cx) {
+    yarn.life -= dt;
+    // Quick enough to read as "it was already there", slow enough not to pop.
+    // A slower fade looks like the ball is arriving from somewhere, which is a
+    // strange thing for an object on a desk to do.
+    yarn.fade = Math.min(1, yarn.fade + dt * 12);
+    if (yarn.life <= -0.5) {
+      yarn.on = false;
+      return;
+    }
+
+    const home = yarnHome(cx);
+    yarn.vx += (home - yarn.x) * YARN_SPRING * dt;
+    yarn.vx *= Math.max(0, 1 - YARN_FRICTION * dt);
+    yarn.x += yarn.vx * dt;
+
+    // The canvas edge is a wall it bounces off, rather than somewhere it can
+    // vanish to. Losing the ball off the side would be the same failure as
+    // throwing paper off the bottom.
+    const r = yarnRadius();
+    if (yarn.x < r) {
+      yarn.x = r;
+      yarn.vx = Math.abs(yarn.vx) * 0.45;
+    } else if (yarn.x > L.width - r) {
+      yarn.x = L.width - r;
+      yarn.vx = -Math.abs(yarn.vx) * 0.45;
+    }
+
+    yarn.hop += yarn.hopV * dt;
+    yarn.hopV -= 230 * L.scale * dt;
+    if (yarn.hop <= 0) {
+      yarn.hop = 0;
+      // Bounce, until the bounce is too small to be worth drawing.
+      yarn.hopV = yarn.hopV < -22 * L.scale ? -yarn.hopV * 0.42 : 0;
+    }
+
+    // Rotation follows distance travelled, not time, so it stops turning exactly
+    // when it stops moving. Dividing by the sprite scale keeps the wrap sliding
+    // at the same apparent speed however big the cat is.
+    yarn.roll += (yarn.vx * dt) / (yarnScale() * 3);
+  }
+
+  function drawYarn(t, cx, cy) {
+    const s = yarnScale();
+    const ground = yarnGround(cy);
+    const by = ground - yarnRadius() - yarn.hop;
+    const alpha = yarn.fade * clamp(yarn.life / 0.5 + 1, 0, 1);
+
+    /*
+     * The thread. Drawn as a run of lattice-snapped squares rather than a
+     * stroked line, because a 1px antialiased diagonal is the one thing on this
+     * canvas that would look like it came from a different program.
+     *
+     * It sags when the ball is close and pulls straight as it gets further out,
+     * which is what sells it as a thread rather than a stick.
+     */
+    const px = cx + A.paws.x * L.scale;
+    const py = ground - L.scale;
+    const dist = Math.hypot(yarn.x - px, by - py);
+    const slack = 1 - clamp(dist / (L.width * 0.45), 0, 1);
+    const sag = (1 + slack * 3) * L.scale;
+    const wob = Math.min(3, Math.abs(yarn.vx) / (14 * L.scale)) * L.scale;
+    const dot = Math.max(1, Math.round(L.scale * 0.5));
+
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.fillStyle = YARN_BODY;
+    const steps = 20;
+    for (let i = 1; i < steps; i++) {
+      const u = i / steps;
+      const arc = Math.sin(Math.PI * u); // zero at both ends: it stays attached
+      const x = px + (yarn.x - px) * u;
+      const y = py + (by - py) * u + arc * (sag + Math.sin(u * 7 - t / 90) * wob);
+      ctx.fillRect(Math.round(x / dot) * dot, Math.round(y / dot) * dot, dot, dot);
+    }
+    ctx.globalAlpha = 1;
+
+    cat.drawYarn(ctx, yarn.x, by, s, yarn.roll, YARN_BODY, YARN_WRAP, alpha);
   }
 
   // --- loop ----------------------------------------------------------------
@@ -272,6 +469,20 @@
     const t = now();
     const dt = Math.min(0.05, (t - last) / 1000);
     last = t;
+
+    // A pointer that has stopped reporting has stopped moving. On a platform
+    // with a real global cursor this never fires — main resends at 60Hz — so it
+    // only covers the case where local events are the only source.
+    if (t - speedAt > 90) cursor.speed = 0;
+
+    // Ease into and out of hiding. The sprite is simply drawn past the end of
+    // its own canvas; the clipping is what makes it look like it has slipped
+    // off the screen edge.
+    peekAmt += (peekWanted - peekAmt) * Math.min(1, dt * 3.5);
+    if (Math.abs(peekWanted - peekAmt) < 0.002) peekAmt = peekWanted;
+    const peekX = peekTo.x * peekAmt;
+    const peekY = peekTo.y * peekAmt;
+    const hiding = peekAmt > 0.5;
 
     ctx.clearRect(0, 0, L.width, L.height);
 
@@ -288,8 +499,8 @@
     sleepiness = clamp((idleMs - 120_000) / 180_000, 0, 1);
 
     // cat centre in window coords
-    const cx = catX + A.head.x * L.scale;
-    const cy = catY + A.head.y * L.scale;
+    const cx = catX + peekX + A.head.x * L.scale;
+    const cy = catY + peekY + A.head.y * L.scale;
     const dx = cursor.lx - cx;
     const dy = cursor.ly - cy;
     const dist = Math.hypot(dx, dy);
@@ -307,7 +518,7 @@
     // Hover: simply being noticed is its own reaction. Without this the cat
     // ignores you until you wiggle the mouse on exactly the right pixels,
     // which reads as broken rather than aloof.
-    hoverAmt = clamp(hoverAmt + (inside && !dragging ? dt * 5 : -dt * 3), 0, 1);
+    hoverAmt = clamp(hoverAmt + (inside ? dt * 5 : -dt * 3), 0, 1);
     if (inside && !wasInside) {
       const h = headPoint();
       spawn("spark", h.x + 18, h.y - 2, { colour: "#ffe9a8", life: 0.7, vy: -28 });
@@ -318,8 +529,8 @@
     // Petting: anywhere on the upper half counts as the head, and the movement
     // threshold is low — a slow deliberate stroke should register, and it did
     // not when the bar was set at a brisk flick.
-    const overHead = inside && cursor.ly < catY + 18 * L.scale;
-    if (S.behaviours.petting && overHead && cursor.speed > 0.5 && !dragging) {
+    const overHead = inside && cursor.ly < catY + peekY + 18 * L.scale;
+    if (S.behaviours.petting && overHead && cursor.speed > 0.5) {
       petMeter = clamp(petMeter + dt * 1.8, 0, 1);
       lastActivity = Date.now();
     } else {
@@ -330,10 +541,6 @@
       const h = headPoint();
       spawn("heart", h.x + (Math.random() - 0.5) * 26, h.y, { colour: "#f2708a", life: 1.1 });
     }
-
-    // hunting
-    const wantHunt = S.behaviours.mouseHunt && cursor.speed > 9 && !dragging;
-    huntAmt = clamp(huntAmt + (wantHunt ? dt * 3 : -dt * 1.6), 0, 1);
 
     // overheat steam
     if (heat > 0.5 && Math.random() < dt * 8) {
@@ -377,28 +584,9 @@
       eye = { x: clamp((dx / n) * 1.6, -1, 1), y: clamp((dy / n) * 1.6, -1, 1) };
     }
 
-    // drag velocity -> mochi squash
-    const vx = cursor.lx - lastCursor.lx;
-    const vy = cursor.ly - lastCursor.ly;
-    lastCursor = { lx: cursor.lx, ly: cursor.ly };
-    if (dragging) dragVel = { x: lerp(dragVel.x, vx, 0.3), y: lerp(dragVel.y, vy, 0.3) };
-    else dragVel = { x: lerp(dragVel.x, 0, 0.15), y: lerp(dragVel.y, 0, 0.15) };
-
     let squashX = 1;
     let squashY = 1;
 
-    if (dragging) {
-      // hanging from the scruff: stretched tall, swaying with horizontal speed
-      const pull = clamp(Math.abs(dragVel.y) / 26, 0, 0.35);
-      squashY = 1 + 0.22 + pull;
-      squashX = 1 - 0.14 - pull * 0.6;
-    }
-    if (wobble > 0) {
-      wobble = Math.max(0, wobble - dt * 2.2);
-      const w = Math.sin(wobble * Math.PI * 6) * wobble * 0.28;
-      squashX += w;
-      squashY -= w;
-    }
     if (t < stretchUntil) {
       const p = 1 - (stretchUntil - t) / 1400;
       const e = Math.sin(p * Math.PI); // ease in and back out
@@ -410,18 +598,12 @@
     squashX -= hoverAmt * 0.02;
 
     // breathing, but only when otherwise still
-    const calm = 1 - Math.max(huntAmt, petMeter, hoverAmt, dragging ? 1 : 0);
+    const calm = 1 - Math.max(petMeter, hoverAmt);
     squashY += Math.sin(t / 620) * 0.018 * calm;
 
     // position offsets
     let ox = 0;
     let oy = 0;
-    if (huntAmt > 0) {
-      const n = Math.max(1, dist);
-      ox += (dx / n) * huntAmt * 26;
-      oy += (dy / n) * huntAmt * 14;
-      oy -= Math.abs(Math.sin(t / 90)) * huntAmt * 8; // scampering bob
-    }
     if (t < jumpUntil) {
       const p = 1 - (jumpUntil - t) / 700;
       oy -= Math.abs(Math.sin(p * Math.PI * 2)) * 26;
@@ -429,16 +611,28 @@
     if (typing && S.behaviours.kneading) oy += Math.sin(t / 70) * 1.5;
     oy -= hoverAmt * 3;
 
-    const mouth =
-      huntAmt > 0.4 || heat > 0.6
-        ? "open"
-        : purring || hoverAmt > 0.5
-          ? "smile"
-          : "neutral";
+    const mouth = heat > 0.6 ? "open" : purring || hoverAmt > 0.5 ? "smile" : "neutral";
+
+    /*
+     * --- yarn ball ---
+     * Stepped before the cat is drawn, because the cat leans after it and that
+     * lean has to be in the render call. The ball itself is drawn afterwards —
+     * see below for why.
+     */
+    const yarnCx = catX + ox + peekX;
+    if (yarn.on) {
+      if (hiding) {
+        yarn.on = false; // put it away rather than leave it rolling alone
+      } else {
+        updateYarn(dt, yarnCx);
+        // The cat leans after it. Small on purpose: this is a glance, not a pounce.
+        ox += clamp((yarn.x - yarnHome(yarnCx)) * 0.05, -2.5, 2.5);
+      }
+    }
 
     const hit = cat.render(ctx, {
-      x: catX + ox,
-      y: catY + oy,
+      x: catX + ox + peekX,
+      y: catY + oy + peekY,
       scale: L.scale,
       eye,
       lids,
@@ -449,6 +643,19 @@
       knead: typing && S.behaviours.kneading ? (t % 320) / 320 : null,
     });
 
+    /*
+     * The ball goes ON TOP of the cat, which sounds wrong and is not. It sits on
+     * the paw line, not at head height, so the only thing it ever crosses is the
+     * cat's front feet — and a ball in front of the feet is exactly where a ball
+     * on a desk is.
+     *
+     * Drawing it behind was tried first and is much worse. The cat is 128px of
+     * opaque sprite and the canvas only has 60px of padding either side, so
+     * rolling inward put the ball behind the body and it simply disappeared for
+     * most of the roll: half the effect, invisible.
+     */
+    if (yarn.on && !hiding) drawYarn(t, yarnCx, catY + oy + peekY);
+
     // --- thinking indicator ---
     // Three dots cycling above the head while an agent works. Drawn with a
     // dark plate behind each dot so it stays legible on a light desktop as
@@ -457,9 +664,13 @@
       const h = headPoint();
       const s = Math.max(3, Math.round(L.scale * 1.4));
       const step = Math.floor(t / 260) % 4;
+      // Same problem the speech bubble has: flush against the top of the screen,
+      // "above the head" is off-screen. Drop them under the cat instead.
+      const above = Math.round(h.y - s * 6);
+      const below = Math.round(catY + peekY + CatSprites.H * L.scale + s);
       for (let i = 0; i < 3; i++) {
         const x = Math.round(h.x - s * 4 + i * s * 3) + ox;
-        const y = Math.round(h.y - s * 6) + oy;
+        const y = (above >= 0 ? above : below) + oy;
         ctx.globalAlpha = 1;
         ctx.fillStyle = "#14141a";
         ctx.fillRect(x - 1, y - 1, s + 2, s + 2);
@@ -503,10 +714,14 @@
     // that a normal position, not an edge case.
     const flip = winY < 12;
     bubbleEl.classList.toggle("below", flip);
-    bubbleEl.style.left = `${catX + (CatSprites.W * L.scale) / 2 + ox}px`;
+    // Centred on the cat, but nudged back inside when the cat is flush against a
+    // screen edge — out there half the bubble hangs outside its own window and
+    // is simply clipped away, which ate the right-hand half of every message.
+    const half = (bubbleEl.offsetWidth || 0) / 2;
+    bubbleEl.style.left = `${clamp(catX + peekX + (CatSprites.W * L.scale) / 2 + ox, half + 2, L.width - half - 2)}px`;
     bubbleEl.style.top = flip
-      ? `${catY + CatSprites.H * L.scale + oy - 4}px`
-      : `${catY + oy - 6}px`;
+      ? `${catY + peekY + CatSprites.H * L.scale + oy - 4}px`
+      : `${catY + peekY + oy - 6}px`;
   }
 
   requestAnimationFrame(frame);

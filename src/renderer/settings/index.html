@@ -47,23 +47,13 @@
           <select id="posDisplay" class="text sel" hidden></select>
         </div>
         <div id="snap" class="snap" aria-label="Snap to screen position"></div>
-        <p class="note">Drag the cat anywhere, or type exact coordinates. Snap buttons use the selected screen.</p>
+        <p class="note">Type exact coordinates, or use the snap buttons. Coordinates are the cat itself, so 0,0 puts it flush in the corner.</p>
       </section>
 
       <section>
         <h2>Reactions</h2>
         <div id="behaviours" class="toggles"></div>
         <p id="inputStatus" class="note"></p>
-        <div class="row" id="gainRow" hidden>
-          <span class="lbl">Pointer speed</span>
-          <input id="gain" type="range" min="0.4" max="3" step="0.1" />
-          <output id="gainOut" class="num">1.0x</output>
-        </div>
-        <p class="note" id="gainNote" hidden>
-          Wayland hides the real cursor position, so it is estimated from raw mouse
-          movement. If the cat looks the wrong way, tune this — or flick the mouse
-          into a screen corner, which resyncs it exactly.
-        </p>
         <button id="grantInput" class="btn" hidden>ENABLE FULL INPUT TRACKING</button>
         <p id="grantResult" class="note" hidden></p>
       </section>

@@ -22,6 +22,7 @@ const store = require("./store");
 const input = require("./input");
 const { Reminders } = require("./reminders");
 const { AgentWatcher } = require("./agents");
+const { WatchDetector } = require("./watching");
 const CatSprites = require("../renderer/pet/sprites.js");
 
 // Linux compositors need to be told we actually mean it about transparency.
@@ -37,9 +38,14 @@ let reminders = null;
 // Cursor-over-cat state
 let hitRect = null; // { x, y, w, h } in window-local px, published by the renderer
 let ignoring = null; // last value passed to setIgnoreMouseEvents; null = unset
-let drag = false; // a drag gesture is in progress
-let dragSeen = 0; // last time we heard from it, for the stuck-drag watchdog
+// The cat is positioned by coordinate only; there is no drag gesture. See the
+// note in renderer/pet/pet.js for why steering the window by pointer deltas
+// could not reach the screen edges.
 let agents = null;
+let watcher = null;
+// Peek mode: where the cat was before it went to hide, so it can come back.
+let peeking = false;
+let prePeek = null;
 // How far the sprite is slid inside its window so the cat can reach a screen
 // edge the window itself is not allowed to cross. Usually {0,0}.
 let catOffset = { x: 0, y: 0 };
@@ -130,7 +136,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
  * the true edge. Same trick makes the corners reachable on every platform
  * without relying on off-screen window placement being permitted.
  */
-function placeCat(catPos) {
+function placeCat(catPos, persist = true) {
   if (!petWin || petWin.isDestroyed()) return catPos;
   const l = layout(store.get().scale);
   const b = unionBounds();
@@ -144,9 +150,140 @@ function placeCat(catPos) {
   const wy = clamp(wantY, b.y0, b.y1 - l.height);
 
   petWin.setPosition(Math.round(wx), Math.round(wy));
+  // Force the click-through state to be re-applied on the next input tick.
+  // setIgnoreMouseEvents installs an input region on the window, and `ignoring`
+  // exists to avoid re-sending a value the window already has — but that cache
+  // assumes the region survives everything, and a compositor is free to rebuild
+  // it when the window moves. If it does, the cat goes quietly untouchable at
+  // its new position with nothing in our state to say so. Re-asserting costs one
+  // call per move.
+  ignoring = null;
   catOffset = { x: Math.round(wantX - wx), y: Math.round(wantY - wy) };
-  store.set({ position: { x: cx, y: cy } });
+  // Peek mode moves the cat somewhere it does not LIVE. Persisting that would
+  // overwrite the position the user chose with the edge it hid against, and a
+  // crash or quit mid-video would make the move permanent.
+  if (persist) store.set({ position: { x: cx, y: cy } });
   return { x: cx, y: cy };
+}
+
+/*
+ * setAutoLaunch — start with the session.
+ *
+ * `app.setLoginItemSettings` is implemented on macOS and Windows only. On Linux
+ * it does not fail, it simply does nothing: verified on Electron 33 by calling
+ * it and then reading `getLoginItemSettings()` back as `openAtLogin: false`,
+ * with no file written anywhere. So the checkbox saved a preference that had no
+ * effect whatsoever.
+ *
+ * The XDG convention it should have used is a .desktop file in
+ * ~/.config/autostart, which every desktop environment reads.
+ */
+function setAutoLaunch(enabled) {
+  if (process.platform !== "linux") {
+    app.setLoginItemSettings({ openAtLogin: enabled });
+    return;
+  }
+
+  const file = path.join(os.homedir(), ".config", "autostart", "pixelcat.desktop");
+  if (!enabled) {
+    try {
+      fs.unlinkSync(file);
+    } catch {} // already absent is the desired state
+    return;
+  }
+
+  // Packaged, execPath IS the app. Running from a checkout it is the Electron
+  // binary, which needs the project path as its argument or it opens the
+  // default "no app loaded" window instead of the cat.
+  const quote = (s) => (/[\s"']/.test(s) ? `"${s.replace(/(["`$\\])/g, "\\$1")}"` : s);
+  const exec = app.isPackaged
+    ? quote(process.execPath)
+    : `${quote(process.execPath)} ${quote(app.getAppPath())}`;
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Pixelcat",
+        "Comment=A pixel cat that lives on your desktop",
+        `Exec=${exec}`,
+        "Terminal=false",
+        "X-GNOME-Autostart-enabled=true",
+        "",
+      ].join("\n")
+    );
+  } catch (err) {
+    console.error("[autostart] could not write the entry:", err.message);
+  }
+}
+
+/*
+ * Peek mode — get out of the way while something is playing.
+ *
+ * The cat walks to whichever screen edge it is already closest to, then slides
+ * most of its body past it. It cannot actually leave the screen: the window is
+ * clamped on-screen and the canvas clips anything drawn outside, so "sliding
+ * past the edge" IS the sprite being drawn off the end of its own canvas. The
+ * clipping is the effect, not a bug worked around.
+ *
+ * The horizontal edges are preferred over the vertical ones: a cat poking in
+ * from the side of a video is out of the way, and one clinging to the bottom of
+ * the screen is sitting on the subtitles.
+ */
+const PEEK_FRACTION = 0.62; // how much of the cat hides past the edge
+
+function peekTarget() {
+  const l = layout(store.get().scale);
+  const b = unionBounds();
+  const cat = currentCatPos();
+  const centreX = cat.x + l.size / 2;
+  const centreY = cat.y + l.size / 2;
+
+  const dist = {
+    left: centreX - b.x0,
+    right: b.x1 - centreX,
+    top: centreY - b.y0,
+    bottom: b.y1 - centreY,
+  };
+  // Bias towards a side edge unless the cat is markedly nearer a horizontal one.
+  const side = dist.left <= dist.right ? "left" : "right";
+  const vert = dist.top <= dist.bottom ? "top" : "bottom";
+  const edge = dist[side] <= dist[vert] * 1.6 ? side : vert;
+
+  const shift = Math.round(l.size * PEEK_FRACTION);
+  switch (edge) {
+    case "left":
+      return { pos: { x: b.x0, y: cat.y }, shift: { x: -shift, y: 0 } };
+    case "right":
+      return { pos: { x: b.x1 - l.size, y: cat.y }, shift: { x: shift, y: 0 } };
+    case "top":
+      return { pos: { x: cat.x, y: b.y0 }, shift: { x: 0, y: -shift } };
+    default:
+      return { pos: { x: cat.x, y: b.y1 - l.size }, shift: { x: 0, y: shift } };
+  }
+}
+
+function setPeek(active) {
+  if (!petWin || petWin.isDestroyed()) return;
+  if (active === peeking) return;
+
+  if (active) {
+    if (store.get().behaviours.peekMode === false) return;
+    prePeek = currentCatPos();
+    const { pos, shift } = peekTarget();
+    peeking = true;
+    placeCat(pos, false);
+    send("peek", { active: true, shift });
+  } else {
+    peeking = false;
+    if (prePeek) placeCat(prePeek);
+    prePeek = null;
+    send("peek", { active: false, shift: { x: 0, y: 0 } });
+  }
+  sendSettings();
 }
 
 // Where the cat currently is on screen, derived from the live window position.
@@ -165,7 +302,8 @@ function settingsPayload() {
   // Report where the cat actually IS, not where settings last recorded it —
   // on first run `position` is still null and the window is placed by default.
   let position = s.position;
-  if (petWin && !petWin.isDestroyed()) position = currentCatPos();
+  if (peeking && prePeek) position = prePeek;
+  else if (petWin && !petWin.isDestroyed()) position = currentCatPos();
   return { ...s, position, catOffset, layout: layout(s.scale), displays: displayInfo() };
 }
 
@@ -210,16 +348,19 @@ function createPet() {
   petWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   petWin.loadFile(path.join(__dirname, "../renderer/pet/index.html"));
 
-  // 'moved' fires continuously while dragging, so the write and the settings
-  // echo are both debounced to the end of the gesture.
+  // The window can still be moved by the window manager itself (KWin's
+  // Meta+drag, a "move to screen" action), which placeCat never hears about.
+  // Debounced because a WM move emits this continuously, and because our own
+  // setPosition triggers it too — settling first keeps the readback truthful.
   let movedTimer = null;
   petWin.on("moved", () => {
     if (!petWin || petWin.isDestroyed()) return;
     clearTimeout(movedTimer);
     movedTimer = setTimeout(() => {
       if (!petWin || petWin.isDestroyed()) return;
+      if (peeking) return; // hiding is not a new home
       store.set({ position: currentCatPos() });
-      // Keep the X/Y fields in settings truthful when the cat is dragged.
+      // Keep the X/Y fields in settings truthful however the cat got moved.
       if (settingsWin && !settingsWin.isDestroyed()) sendSettings();
     }, 180);
   });
@@ -321,7 +462,6 @@ function wireInput() {
 
   // Global sources first: on Wayland the cursor poll consumes the raw deltas
   // this produces, so it has to be accumulating before polling starts.
-  input.setGain(store.get().pointerGain);
   input.startGlobal({
     onKey: () => send("key", { t: Date.now() }),
     onWheel: (e) => send("wheel", { rotation: e.rotation || 0 }),
@@ -329,13 +469,6 @@ function wireInput() {
 
   input.startCursor((p, dx, dy) => {
     if (!petWin || petWin.isDestroyed() || !petWin.isVisible()) return;
-
-    // Watchdog: a lost drag-end used to leave `drag` set forever, and the old
-    // code re-pinned the window to the cursor on every poll — which silently
-    // overrode setPosition, so the snap presets appeared to do nothing.
-    // Dragging no longer touches position here at all, but a stuck flag would
-    // still keep the window permanently interactive, so it self-clears.
-    if (drag && Date.now() - dragSeen > 2500) drag = false;
 
     const [wx, wy] = petWin.getPosition();
     const lx = p.x - wx;
@@ -346,13 +479,22 @@ function wireInput() {
     const raw = Math.hypot(dx, dy);
     lastSpeed = lastSpeed * 0.8 + raw * 0.2;
 
-    // No global cursor source (Wayland without /dev/input access): we cannot
-    // hit-test a pointer we cannot see, and leaving the window click-through
-    // would make the cat completely untouchable — no drag, no petting, no
-    // right-click. Stay interactive instead and let the renderer track the
-    // pointer from its own events.
-    const stale = input.status.cursor === "frozen";
-    if (stale) {
+    // Only a pointer the display server reports can gate click-through.
+    //
+    // `evdev` is DEAD RECKONING — an estimate, not a position. It has to absorb
+    // pointer acceleration we cannot observe, and it is seeded from the frozen
+    // native point, so it is wrong from the first sample and only drifts further
+    // (measured on this KDE Wayland session: ~400px off in both axes). Hit-testing
+    // the cat against it means the test essentially never passes, the window stays
+    // click-through forever, and the cat cannot be petted, dragged, right-clicked
+    // or double-clicked at all — every click falls through to whatever is behind.
+    //
+    // So an estimate is treated exactly like no cursor at all: keep the window
+    // interactive and let the renderer drive interaction from its own DOM pointer
+    // events, which are exact whenever the pointer is over the window. Trade-off
+    // is the documented one — the window's rect, not just the cat, absorbs clicks.
+    const exact = input.status.cursor === "native";
+    if (!exact) {
       if (ignoring !== false) {
         ignoring = false;
         petWin.setIgnoreMouseEvents(false);
@@ -364,7 +506,7 @@ function wireInput() {
         lx <= hitRect.x + hitRect.w &&
         ly >= hitRect.y &&
         ly <= hitRect.y + hitRect.h;
-      const shouldIgnore = !(over || drag);
+      const shouldIgnore = !over;
       if (shouldIgnore !== ignoring) {
         ignoring = shouldIgnore;
         petWin.setIgnoreMouseEvents(shouldIgnore, { forward: true });
@@ -374,7 +516,7 @@ function wireInput() {
     // wy lets the renderer know when the window is hard against (or past) the
     // top of the screen, so it can flip speech bubbles below the cat instead
     // of drawing them off-screen.
-    send("cursor", { gx: p.x, gy: p.y, lx, ly, wy, speed: lastSpeed, dragging: !!drag, stale });
+    send("cursor", { gx: p.x, gy: p.y, lx, ly, wy, speed: lastSpeed, exact });
   });
 
 }
@@ -383,33 +525,6 @@ function wireInput() {
 function wireIpc() {
   ipcMain.on("hit-rect", (_e, rect) => {
     hitRect = rect;
-  });
-
-  ipcMain.on("drag-start", () => {
-    drag = true;
-    dragSeen = Date.now();
-    send("drag", { active: true });
-  });
-
-  // Dragging moves the window by RELATIVE deltas from the renderer's pointer
-  // events, never by absolute cursor position. Wayland refuses to report the
-  // global cursor, so the old absolute scheme dragged the cat to a fixed point
-  // and pinned it there; movementX/Y is reported correctly everywhere.
-  ipcMain.on("drag-move", (_e, { dx, dy }) => {
-    dragSeen = Date.now();
-    if (!drag || !petWin || petWin.isDestroyed()) return;
-    const [x, y] = petWin.getPosition();
-    petWin.setPosition(Math.round(x + dx), Math.round(y + dy));
-  });
-
-  ipcMain.on("drag-end", () => {
-    drag = false;
-    send("drag", { active: false });
-    if (!petWin || petWin.isDestroyed()) return;
-    // Normalise: re-derive the cat's screen position and re-place it, which
-    // recomputes catOffset if the drag ended against a screen edge.
-    placeCat(currentCatPos());
-    sendSettings();
   });
 
   ipcMain.on("open-settings", openSettings);
@@ -457,9 +572,8 @@ function wireIpc() {
       petWin.setAlwaysOnTop(patch.alwaysOnTop, "screen-saver");
     }
     if (patch.launchAtLogin !== undefined) {
-      app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin });
+      setAutoLaunch(patch.launchAtLogin);
     }
-    if (patch.pointerGain !== undefined) input.setGain(patch.pointerGain);
     if (patch.position && petWin && !petWin.isDestroyed()) placeCat(patch.position);
     if (patch.reminders) reminders.resetCadence();
     if (patch.agentNames !== undefined || patch.behaviours) applyAgentSettings();
@@ -528,15 +642,24 @@ if (!app.requestSingleInstanceLock()) {
     applyAgentSettings();
     agents.start();
 
+    // Peek mode watches for anything playing video and moves the cat aside.
+    // Started in boot() below, not here: setPeek needs a window to move, and a
+    // video already playing at launch would otherwise be reported once, dropped
+    // for want of a pet window, and never mentioned again.
+    watcher = new WatchDetector((active) => setPeek(active));
+
     wireIpc();
 
     // Compositors on Linux occasionally hand back an opaque window if it is
     // created the instant the app reports ready; a frame's grace fixes it.
     const boot = () => {
       createPet();
+      watcher.start();
       buildTray();
       wireInput();
-      app.setLoginItemSettings({ openAtLogin: store.get().launchAtLogin });
+      // Re-assert on every start: the entry points at a path, and a checkout
+      // that moved would otherwise autostart nothing from a stale Exec line.
+      setAutoLaunch(store.get().launchAtLogin);
       // No dock icon and a tray that some Linux shells hide entirely means a
       // first run can leave you with a cat and no way to configure it.
       if (process.argv.includes("--settings") || !tray) openSettings();
@@ -557,5 +680,6 @@ if (!app.requestSingleInstanceLock()) {
     input.stopGlobal();
     if (reminders) reminders.stop();
     if (agents) agents.stop();
+    if (watcher) watcher.stop();
   });
 }

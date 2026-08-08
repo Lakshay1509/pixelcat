@@ -16,19 +16,17 @@ const DEFAULTS = {
   scale: 4, // screen px per sprite px
   name: "",
   position: null, // null => bottom-right of the primary display on first run
-  // Multiplies raw /dev/input deltas when dead-reckoning the cursor on Wayland.
-  // Ignored wherever the display server reports the real pointer position.
-  pointerGain: 1,
   alwaysOnTop: true,
   launchAtLogin: false,
   behaviours: {
     eyeFollow: true,
-    mouseHunt: true,
     petting: true,
     kneading: true,
     overheat: true,
-    scrollUnroll: true,
+    scrollUnroll: true, // the yarn ball; the key predates it and is kept so
+    //                     upgrading does not silently re-enable it
     agentReactions: true,
+    peekMode: true,
   },
   // Extra process names to treat as AI agents, comma separated. Empty means
   // just the built-in list (claude, codex, cursor-agent, opencode, aider, ...).

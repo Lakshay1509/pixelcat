@@ -42,14 +42,16 @@ function isWayland() {
 
 // Raw device deltas accumulated between cursor polls.
 const accum = { dx: 0, dy: 0 };
+// Latched true the first time a device actually reports pointer motion. Opening
+// a device is NOT evidence that it will ever produce any: a laptop touchpad
+// reports absolute finger coordinates and no relative deltas at all, so on a
+// touchpad-only Wayland box every read succeeds and the cursor never moves.
+// Assuming otherwise is what made the cat hit-test against a frozen point and
+// go permanently unclickable.
+let sawPointerMotion = false;
 let virtual = null;
 let lastNative = null;
 let nativeStaleFor = 0;
-let gain = 1;
-
-function setGain(g) {
-  gain = Math.max(0.2, Math.min(4, Number(g) || 1));
-}
 
 // Union of every display, so dead reckoning clamps to the real desktop and
 // picks up the edge-resync behaviour described above.
@@ -66,11 +68,43 @@ function desktopBounds() {
   return { x0, y0, x1, y1 };
 }
 
+/*
+ * The deltas handed to onMove are the motion the mouse INTENDED, not the change
+ * in the estimated position. Those differ at a screen edge: `virtual` is clamped
+ * to the desktop, so once the estimate is pinned against the right-hand side,
+ * sweeping further right changes it by nothing and the cat concludes the mouse
+ * has stopped. The intended delta stays truthful there, and it is the only thing
+ * anyone measures speed from.
+ */
 function startCursor(onMove, hz = 60) {
   stopCursor();
-  let prev = null;
 
   cursorTimer = setInterval(() => {
+    // This is the app's single input tick. The evdev reader deliberately owns
+    // no timer of its own (see evdev-linux.js): pumping it here costs no extra
+    // wakeup, and draining immediately BEFORE the sampler below means raw
+    // deltas are consumed in the same tick they arrived rather than the next.
+    if (evdev) evdev.drain();
+
+    /*
+     * Decide whether we genuinely have a cursor, by evidence rather than hope.
+     *
+     * This is a LATCH, not a moving window, because the header's warning still
+     * stands: an idle mouse looks identical to a frozen one, so a timeout would
+     * flap and make the window steal clicks every time the user paused. We
+     * start pessimistic, promote the first time real motion arrives, and demote
+     * only when the hardware that produced it is physically gone.
+     */
+    if (evdev && isWayland()) {
+      const live = sawPointerMotion && evdev.hasRelDevice;
+      if (live && status.cursor === "frozen") {
+        status.cursor = "evdev";
+      } else if (!live && status.cursor === "evdev") {
+        status.cursor = "frozen";
+        sawPointerMotion = false; // the next mouse has to prove itself too
+      }
+    }
+
     let native;
     try {
       native = screen.getCursorScreenPoint();
@@ -83,11 +117,18 @@ function startCursor(onMove, hz = 60) {
     // flipped `frozen` straight back to `native` on the very first poll, which
     // re-enabled hit-testing against a cursor that never moves again — the cat
     // then became click-through forever and could not be hovered or petted.
+    const prevNative = lastNative;
     const nativeMoved =
-      !!lastNative && (native.x !== lastNative.x || native.y !== lastNative.y);
+      !!prevNative && (native.x !== prevNative.x || native.y !== prevNative.y);
     lastNative = native;
 
+    // How far the mouse actually travelled this tick, before any clamping.
+    let moveX = 0;
+    let moveY = 0;
+
     if (nativeMoved) {
+      moveX = native.x - prevNative.x;
+      moveY = native.y - prevNative.y;
       // The display server is telling us the truth; take it and drop whatever
       // we'd accumulated, so the two sources can never fight.
       virtual.x = native.x;
@@ -98,8 +139,21 @@ function startCursor(onMove, hz = 60) {
       if (status.cursor === "frozen") status.cursor = "native";
     } else if (accum.dx || accum.dy) {
       const b = desktopBounds();
-      virtual.x = Math.max(b.x0, Math.min(b.x1 - 1, virtual.x + accum.dx * gain));
-      virtual.y = Math.max(b.y0, Math.min(b.y1 - 1, virtual.y + accum.dy * gain));
+      // evdev reports DEVICE pixels; every coordinate here — desktopBounds, the
+      // window rect it is hit-tested against — is a logical DIP. On a scaled
+      // display those are not the same unit (measured: 1.25 on this KDE session,
+      // a 1536x960 logical desktop on 1920x1200 of hardware), so the estimate ran
+      // 25% fast and then clamped against the wrong extent, which broke the one
+      // thing that was supposed to rescue it: shoving the pointer into a corner
+      // resyncs only if both agree where the corner is.
+      let sf = 1;
+      try {
+        sf = screen.getDisplayNearestPoint({ x: Math.round(virtual.x), y: Math.round(virtual.y) }).scaleFactor || 1;
+      } catch {}
+      moveX = accum.dx / sf;
+      moveY = accum.dy / sf;
+      virtual.x = Math.max(b.x0, Math.min(b.x1 - 1, virtual.x + moveX));
+      virtual.y = Math.max(b.y0, Math.min(b.y1 - 1, virtual.y + moveY));
       accum.dx = 0;
       accum.dy = 0;
     } else {
@@ -107,10 +161,7 @@ function startCursor(onMove, hz = 60) {
     }
 
     const p = { x: Math.round(virtual.x), y: Math.round(virtual.y) };
-    const dx = prev ? p.x - prev.x : 0;
-    const dy = prev ? p.y - prev.y : 0;
-    prev = p;
-    onMove(p, dx, dy);
+    onMove(p, moveX, moveY);
   }, Math.round(1000 / hz));
 }
 
@@ -131,18 +182,26 @@ function startGlobal({ onKey, onWheel }) {
       onKey: () => onKey && onKey(),
       onWheel: (v) => onWheel && onWheel({ rotation: v }),
       onMove: (dx, dy) => {
+        if (dx || dy) sawPointerMotion = true;
         accum.dx += dx;
         accum.dy += dy;
       },
       onButton: () => {},
     });
+    // NOTE: the reader is inert until something calls drain() — startCursor()
+    // is what pumps it, so it must be running for typing detection to work too.
     if (evdev.start()) {
       status.keyboard = "evdev";
       status.source = "/dev/input";
-      status.cursor = "evdev";
-      status.detail = isWayland
-        ? "Wayland hides global input, so it is read from /dev/input instead. Key codes are discarded — only the fact that a key moved is used."
-        : "Reading /dev/input directly. Key codes are discarded.";
+      // Start pessimistic and let the cursor tick promote us once a device has
+      // actually reported motion. On X11 the native point works regardless, so
+      // only Wayland has anything to prove.
+      status.cursor = isWayland ? "frozen" : "native";
+      status.detail = !isWayland
+        ? "Reading /dev/input directly. Key codes are discarded."
+        : evdev.hasRelDevice
+          ? "Wayland hides global input, so it is read from /dev/input instead. Key codes are discarded — only the fact that a key moved is used. The pointer can only be estimated, never placed exactly, so the cat is touched directly: its window stays interactive instead of hit-testing a guess."
+          : "Typing is read from /dev/input. No connected device reports relative pointer motion — a laptop touchpad reports absolute finger positions, which cannot be dead-reckoned — so cursor tracking stays off until a mouse is plugged in.";
     } else {
       evdev = null;
       status.keyboard = "unsupported";
@@ -202,4 +261,4 @@ function stopGlobal() {
   }
 }
 
-module.exports = { startCursor, stopCursor, startGlobal, stopGlobal, status, setGain };
+module.exports = { startCursor, stopCursor, startGlobal, stopGlobal, status };

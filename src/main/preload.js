@@ -15,15 +15,12 @@ const FROM_MAIN = [
   "say",
   "pomodoro",
   "input-status",
-  "drag",
   "agent",
+  "peek",
 ];
 
 const TO_MAIN = [
   "hit-rect",
-  "drag-start",
-  "drag-move",
-  "drag-end",
   "open-settings",
   "close-settings",
   "quit",

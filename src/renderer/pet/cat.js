@@ -22,8 +22,33 @@
     steam: [".XX.", "XXXX", "XXXX", ".XX."],
     z: ["XXXX", "...X", "..X.", ".X..", "XXXX"],
     spark: [".X.", "XXX", ".X."],
-    paper: ["XXXXX", "X...X", "X...X", "XXXXX"],
   };
+
+  /*
+   * A ball of yarn. `o` is the wrap thread crossing the ball, and the four
+   * frames step those diagonals one pixel along, so cycling them slides the wrap
+   * around the ball and it reads as rolling — forwards or backwards depending on
+   * which way the cycle runs. Four is the whole period; a fifth frame would land
+   * back on the first.
+   *
+   * The silhouette is a real circle rather than a square with the corners
+   * knocked off. At 7px that difference is the whole difference between a ball
+   * and a die, and a die does not look like it rolls, it looks like it tumbles.
+   *
+   * Denser wrap (a stripe every 3px, or a crisscross both ways) was tried and is
+   * too busy at this size — the ball stops reading as round and starts reading
+   * as a checkerboard.
+   *
+   * It is not in PARTICLES because particles are one flat colour, and a ball
+   * whose wrap you cannot see turning does not look like it is rolling at all —
+   * it looks like a dot sliding sideways.
+   */
+  const YARN = [
+    ["..XXo..", ".XXoXX.", "XXoXXXo", "XoXXXoX", "oXXXoXX", ".XXoXX.", "..oXX.."],
+    ["..XoX..", ".XoXXX.", "XoXXXoX", "oXXXoXX", "XXXoXXX", ".XoXXX.", "..XXX.."],
+    ["..oXX..", ".oXXXo.", "oXXXoXX", "XXXoXXX", "XXoXXXo", ".oXXXo.", "..XXo.."],
+    ["..XXX..", ".XXXoX.", "XXXoXXX", "XXoXXXo", "XoXXXoX", ".XXXoX.", "..XoX.."],
+  ];
 
   const hex = (h) => [
     parseInt(h.slice(1, 3), 16),
@@ -281,6 +306,25 @@
       for (let y = 0; y < art.length; y++)
         for (let x = 0; x < art[y].length; x++)
           if (art[y][x] === "X") ctx.fillRect(ox + x * s, oy + y * s, s, s);
+      ctx.globalAlpha = 1;
+    }
+
+    // `frame` may be any integer, including negative — the ball rolls both ways
+    // and the caller should not have to think about which end of the cycle it is.
+    drawYarn(ctx, cx, cy, scale, frame, colour, wrap, alpha = 1) {
+      const art = YARN[((Math.round(frame) % YARN.length) + YARN.length) % YARN.length];
+      const s = Math.max(1, Math.round(scale));
+      const ox = Math.round(cx - (art[0].length * s) / 2);
+      const oy = Math.round(cy - (art.length * s) / 2);
+      ctx.globalAlpha = alpha;
+      for (let y = 0; y < art.length; y++) {
+        for (let x = 0; x < art[y].length; x++) {
+          const c = art[y][x];
+          if (c === ".") continue;
+          ctx.fillStyle = c === "o" ? wrap : colour;
+          ctx.fillRect(ox + x * s, oy + y * s, s, s);
+        }
+      }
       ctx.globalAlpha = 1;
     }
   }

@@ -74,8 +74,11 @@ Wayland it never moves so evdev drives.
 Dead reckoning drifts, because the compositor applies pointer acceleration we
 cannot observe. The saving grace: the real cursor stops at the screen edges and
 so does ours, so shoving the mouse into a corner **resyncs both exactly**. Users
-do this constantly without being told to. `Pointer speed` in settings tunes the
-rest.
+do this constantly without being told to.
+
+The estimate is deliberately never used to decide which pixel the pointer is on:
+that is what the `exact` flag gates. It survives only as "the mouse is moving",
+which needs no calibration — which is why there is no pointer-speed setting.
 
 **Enabling full tracking on Linux/Wayland** — one command, then log out and in:
 
@@ -122,7 +125,7 @@ opaque bounding box; main compares it against the polled cursor.
 ### Behaviours are overlapping drives, not exclusive states
 
 `src/renderer/pet/pet.js` keeps continuous values — `heat`, `petMeter`,
-`huntAmt`, `sleepiness` — that rise and decay independently. A state machine
+`hoverAmt`, `sleepiness` — that rise and decay independently. A state machine
 with one active state at a time reads like a vending machine; overlapping drives
 are why the cat can be half-asleep, blink, and still track your cursor.
 
@@ -134,21 +137,98 @@ presses into the desk instead of floating.
 The cat thinks along while Claude Code, Codex, Cursor, opencode, aider, goose
 and friends are working, and hops when they finish.
 
-There is no API for "is this agent thinking right now", so `src/main/agents.js`
-infers it from CPU: a matched agent process burning CPU is working; when it goes
-quiet, it has answered. One signal, no per-agent integration, and adding a new
-agent is one string in settings.
+This used to be inferred from CPU alone, and CPU is bad at this job in both
+directions. **An agent waiting on the model burns nothing**, so "thinking" read
+as "finished" and the cat celebrated mid-answer — then again at the next pause,
+and the next. Meanwhile a terminal that is merely being *typed into* redraws and
+burns CPU, so an idle session read as work. No amount of debouncing fixes a
+signal that is measuring the wrong thing; it only makes both failures slower.
 
-Two details that decide whether this feels alive or broken:
+The fix is that the agents already write down what they are doing. They all
+persist a transcript so `--resume` works, it is appended to as the turn happens,
+and its last entry says outright whether the model is mid-turn or the turn ended.
+`src/main/agent-sessions.js` reads it — exact, instant, no configuration, and no
+cooperation from the agent.
 
+- **Claude Code** (`~/.claude/projects/*/*.jsonl`) — one assistant message is
+  split across several lines (thinking, text, one per tool call) and every line
+  carries that message's `stop_reason`. `tool_use` means still working; anything
+  else means the turn ended. Reading the content *blocks* instead would be wrong:
+  a mid-turn "Let me check the config" is its own line and looks exactly like a
+  final answer. Only `stop_reason` separates them.
+- **Codex** (`~/.codex/sessions/**/rollout-*.jsonl`) — states it outright, as
+  `event_msg` payloads `task_started` / `task_complete`.
+
+`src/main/agents.js` keeps CPU, demoted to covering the one gap transcripts have:
+a long tool call writes nothing for as long as it runs, and during exactly that
+gap the process tree is busy. So the two compose — transcripts drive, CPU covers
+while a session is silent — and agents that keep no readable transcript (aider,
+goose, amp) still work on CPU alone.
+
+Details that decide whether this feels alive or broken:
+
+- **Two speeds of "done".** A transcript-confirmed turn ending is a fact, so it
+  is announced in ~2s. A CPU lull is a guess and still has to persist ~8s and
+  follow enough work to have been a task at all.
+- **The whole process tree, not just the agent.** Most of what a turn costs is
+  spent in children — the test run, the build — while the parent sits at zero, so
+  measuring the parent alone missed the busiest parts of a turn. Reaped children
+  count too (`cutime`), which is how a finished test run still registers.
+- **`comm` is not enough.** An agent installed as an npm package runs as
+  `node .../claude-code/cli.js` and shows up as "node". Interpreter processes get
+  their arguments read; shells deliberately do not, since a `bash -c` command line
+  contains whatever the agent happened to run and would match itself constantly.
+- **A transcript outlives the process that wrote it.** A session closed mid-turn
+  says "working" forever, so a session only counts while its CLI is still running,
+  and a "working" session that has gone silent for minutes hands the decision back
+  to CPU — which can tell a long tool call from an abandoned terminal.
 - **CPU time deltas, not instantaneous %CPU.** An agent streaming a reply uses
-  CPU in bursts, so a sampled percentage flickers between 0 and 40 constantly
-  and the cat twitches. Accumulated jiffies over the interval are smooth.
-- **Going idle is debounced (~3s).** Agents pause mid-answer waiting on the
-  network. Firing "done!" on every pause would be worse than not having it.
+  CPU in bursts, so a sampled percentage flickers between 0 and 40 constantly and
+  the cat twitches. Accumulated jiffies over the interval are smooth. (macOS is
+  the exception: `ps` reports cumulative CPU only to the second, too coarse for a
+  1Hz poll, so its `%CPU` estimate is read alongside.)
 
 On Linux it reads `/proc` directly — no process spawn, so polling at 1Hz doesn't
 become the CPU load it's trying to measure. Elsewhere it deltas `ps` CPU time.
+
+`node tools/agent-probe.js` prints both signals once a second — which transcripts
+are live and what they say, which process trees matched and what they burned — so
+a miss can be told apart from a mismatch.
+
+### The yarn ball, and why it is drawn on top of the cat
+
+Scrolling bats a ball of yarn along the desk. A thread unspools back to the cat's
+paws and reels it in again when you stop, so it always ends up back at the flank.
+
+It replaced a paper sprite that was spawned per wheel tick and thrown downward
+under gravity. A long scroll buried the desk in rectangles that all fell out of
+frame: nothing to watch on the way, nothing left afterwards, and a mess in
+between. One ball on a spring gives the scroll somewhere to go *and* somewhere to
+come back to — and the return trip is not decoration, it is what keeps the effect
+on a canvas that only has 60px of padding either side of the cat.
+
+Three things that were wrong on the first attempt:
+
+- **The ball is drawn in front of the cat**, which sounds wrong and is not. It
+  sits on the paw line, not at head height, so the only thing it ever crosses is
+  the cat's front feet — which is where a ball on a desk is. Drawing it *behind*
+  was tried first: the cat is 128px of opaque sprite, so rolling inward made the
+  ball vanish for most of its journey. Half the effect, invisible.
+- **It rests at the flank, not at the paws.** Resting in front of the paws looks
+  tidier standing still, but the ball is 21px against a 128px cat and it covers
+  the belly markings the whole time it is out.
+- **The physics was tuned against the real canvas, not by feel.** Travel and
+  settling time pull against each other, and the spring constant matters far less
+  than the impulse cap and the drag — sweeping all three found the trio that gets
+  the ball right across the cat and back to rest 2.5s after the last scroll, just
+  as it starts to fade.
+
+The ball is its own sprite rather than a particle, because particles are one flat
+colour and a ball whose wrap you cannot see turning does not read as rolling — it
+reads as a dot sliding sideways. Four frames step the wrap one pixel along; the
+cycle runs backwards when it rolls the other way. Its silhouette is a real circle
+rather than a square with the corners knocked off, which at 7px is the whole
+difference between a ball and a die.
 
 ### Position means the CAT, not its window
 

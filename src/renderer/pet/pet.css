@@ -46,7 +46,9 @@ canvas#stage {
   left: 50%;
   top: 0;
   transform: translate(-50%, -100%) translateY(-4px) scale(0.9);
-  max-width: 190px;
+  /* Never wider than the window that clips it — 190px was wider than the whole
+     184px stage, so a bubble was cut off before it could be positioned well. */
+  max-width: calc(100% - 8px);
   padding: 7px 10px;
   color: #14141a;
   background: #f4efe6;
