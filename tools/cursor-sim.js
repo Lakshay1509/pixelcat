@@ -25,6 +25,38 @@ const Module = require("module");
 const path = require("path");
 const assert = require("assert");
 
+/*
+ * The simulated session has to OUTLIVE the require() that sets it up.
+ *
+ * input.js reads the session lazily — `anchored = !isWayland()` runs on every
+ * tick — so putting the real environment back before the first step() quietly
+ * hands the estimator the developer's own desktop to reason about instead of
+ * the scenario it was asked to simulate. On a Wayland machine the Wayland cases
+ * then pass for the wrong reason, and the identical suite fails on X11, on CI,
+ * and anywhere with no session at all. Which is the exact failure this file was
+ * written to catch, reintroduced by its own cleanup code.
+ *
+ * The platform is pinned for the same reason. All three regimes are LINUX
+ * regimes, and isWayland() short-circuits on process.platform — so on a Windows
+ * or macOS runner every Wayland scenario silently tests X11 instead and fails
+ * for a reason that has nothing to do with the code under test.
+ */
+const realPlatform = process.platform;
+const realSessionType = process.env.XDG_SESSION_TYPE;
+
+function enterSession(wayland) {
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  process.env.XDG_SESSION_TYPE = wayland ? "wayland" : "x11";
+}
+
+// Put back on the way out, so requiring this harness from another script does
+// not leave the process permanently claiming to be something it is not.
+process.on("exit", () => {
+  Object.defineProperty(process, "platform", { value: realPlatform, configurable: true });
+  if (realSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
+  else process.env.XDG_SESSION_TYPE = realSessionType;
+});
+
 const SF = 1.25; // a scaled display, because that is what broke it last time
 const DESKTOP = { width: 1536, height: 960 }; // logical DIP
 const ACCEL = 1.6; // device px -> physical px. The estimator must discover this.
@@ -112,8 +144,7 @@ function loadInput({ wayland, evdev, uiohookWorks }) {
     return realLoad.apply(this, arguments);
   };
 
-  const realSessionType = process.env.XDG_SESSION_TYPE;
-  process.env.XDG_SESSION_TYPE = wayland ? "wayland" : "x11";
+  enterSession(wayland);
 
   let input;
   let tick = null;
@@ -137,8 +168,8 @@ function loadInput({ wayland, evdev, uiohookWorks }) {
     Module._load = realLoad;
     global.setInterval = realSetInterval;
     global.clearInterval = realClearInterval;
-    if (realSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
-    else process.env.XDG_SESSION_TYPE = realSessionType;
+    // The session is deliberately NOT restored here — see the note at the top.
+    // It has to stay in force for as long as the returned sim can be stepped.
   }
 
   let last = null;
