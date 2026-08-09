@@ -1,0 +1,101 @@
+# Builds a release on all three platforms, each on its own operating system.
+#
+# WHY A MATRIX AND NOT ONE MACHINE
+# Two of the three targets simply cannot be produced anywhere else:
+#
+#   macOS — a .dmg is assembled with macOS-only tooling. electron-builder pulls
+#     `dmg-license`, which declares os: ["darwin"] and therefore refuses to
+#     install on Linux at all. Code signing is likewise macOS-only; a build from
+#     anywhere else logs "skipped macOS application code signing" and produces
+#     something Gatekeeper stops.
+#
+#   Windows — the .exe's icon and version metadata are stamped by `rcedit`,
+#     which is itself a Windows binary. Off Windows that needs wine, and without
+#     it the build yields an executable still identifying itself as Electron.
+#
+# So each job runs on the OS that owns its format, and every artifact is built
+# by the platform that will run it.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # so a release can be rehearsed without minting a tag
+
+permissions:
+  contents: write # the release job attaches files to a GitHub release
+
+jobs:
+  build:
+    strategy:
+      # One platform failing must not cancel the other two: knowing that macOS
+      # broke AND Windows is fine is worth more than the seconds saved.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: build:linux
+          - os: windows-latest
+            script: build:win
+          - os: macos-latest
+            script: build:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The suite is pure JS with no display, so it is a genuine check on every
+      # runner rather than a Linux formality — it is the scroll and cursor
+      # maths, which is exactly the code most likely to differ per platform.
+      - run: npm test
+
+      # `--publish never` is load-bearing. electron-builder will try to upload
+      # to GitHub on its own the moment it sees a token and a tag, which would
+      # race the release job below and half-populate the release.
+      - run: npm run ${{ matrix.script }} -- --publish never
+        env:
+          # No signing certificate is configured. Without this electron-builder
+          # goes looking for one in the runner's keychain, and the failure it
+          # reports is about identities rather than about the missing cert.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixelcat-${{ matrix.os }}
+          # Each platform matches only its own patterns; the rest find nothing,
+          # which is fine — the guard below fires only if a job produced NO
+          # installer at all, i.e. a build that "succeeded" and shipped nothing.
+          path: |
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    # Rehearsals (workflow_dispatch) build and upload artifacts but must not
+    # publish anything. Only a tag makes a release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          body: |
+            Built on each platform natively — see .github/workflows/release.yml.
+
+            **macOS builds are unsigned.** No Apple Developer certificate is
+            configured, so first launch needs right-click → Open, or
+            `xattr -dr com.apple.quarantine /Applications/Pixelcat.app`.
