@@ -1,32 +1,70 @@
+<div align="center">
+
+<img src="assets/icon.png" width="104" alt="Pixelcat" />
+
 # Pixelcat
 
-A pixel cat that lives on your desktop. It reacts to your mouse, keyboard and
-scrolling, reminds you to stretch and drink water, and runs a Pomodoro timer.
-Its colour and pattern are yours to pick.
+**A pixel cat that lives on your desktop — and knows when your AI agent is thinking.**
 
-Runs on macOS, Windows and Linux.
+It follows your cursor, purrs when you pet it, bats a ball of yarn when you scroll,
+nags you to drink water, wears a headband for your Pomodoro, and thinks along
+while Claude Code works.
+
+[![Release](https://github.com/Lakshay1509/pixelcat/actions/workflows/release.yml/badge.svg)](https://github.com/Lakshay1509/pixelcat/actions/workflows/release.yml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/Lakshay1509/pixelcat/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-green)](#license)
+[![Network](https://img.shields.io/badge/network%20calls-0-brightgreen)](#privacy)
+
+[**Download**](#download) · [Features](#features) · [From source](#from-source) · [How it works](AGENTS.md)
+
+</div>
+
+---
+
+## Why
+
+Desktop pets are a solved problem from 1997. This one is built for the way people
+work now: a second presence next to the terminal that reacts to your machine, not
+just to itself. When your coding agent starts a turn, the cat starts thinking.
+When the turn lands, it hops and tells you. You stop tab-checking a job that takes
+ninety seconds.
+
+Everything else it does — the stretching, the water, the Pomodoro — is the same
+idea. Signals you already generate, rendered as something alive in the corner of
+the screen instead of another notification you dismiss.
+
+## Features
+
+| | |
+| --- | --- |
+| **Reacts to you** | Eyes follow the cursor anywhere on screen. Pet it and it purrs. Type fast and it blushes and steams. Scroll and it bats a ball of yarn along the desk. Leave it alone and it dozes off. |
+| **Knows your AI agent** | Thinking dots while Claude Code, Codex, Cursor, opencode, aider, goose or amp are working; a hop and a "finished!" when the turn ends. No integration, no config, no API key. |
+| **Pomodoro you can feel** | The cat puts a headband on for a focus round and takes it off for the break. That's the whole readout. Clock and controls live in settings and the tray. |
+| **Reminders** | Stretch and water on wall-clock intervals, plus scheduled messages and a pinned note above its head. |
+| **Stays out of the way** | Click-through everywhere except the cat itself. Start a video and it slides to the screen edge until you're done *(Linux)*. |
+| **40 cats** | 8 palettes × 5 patterns, 2×–10× size, all from one hand-drawn 32×32 grid. |
+| **Costs nothing** | Two runtime dependencies. Zero network calls. Reads `/proc` rather than spawning processes to watch CPU. |
 
 ## Download
 
-Builds are on the [releases page](https://github.com/Lakshay1509/pixelcat/releases/latest),
+Grab a build from the [**releases page**](https://github.com/Lakshay1509/pixelcat/releases/latest) —
 one per platform, each built on that platform.
 
-| Platform | Download |
+| Platform | File |
 | --- | --- |
-| **Windows** | `Pixelcat.Setup.0.1.0.exe` (installer) or `Pixelcat.0.1.0.exe` (portable, no install) |
-| **macOS** | `Pixelcat-0.1.0-arm64.dmg` for Apple Silicon, `Pixelcat-0.1.0.dmg` for Intel |
-| **Linux** | `Pixelcat-0.1.0.AppImage` — `chmod +x` it and run it. Or the `.deb` if you'd rather your package manager knew about it |
+| **Windows** | `Pixelcat.Setup.*.exe` (installer) or `Pixelcat.*.exe` (portable, no install) |
+| **macOS** | `*-arm64.dmg` for Apple Silicon, `*.dmg` for Intel |
+| **Linux** | `*.AppImage` — `chmod +x` and run. Or the `.deb` if you'd rather your package manager knew about it. |
 
 ### The builds are not code-signed
 
 There is no Apple or Windows signing certificate behind these, so both systems
-will treat them as software from nobody in particular. Nothing is wrong with the
+treat them as software from nobody in particular. Nothing is wrong with the
 download; this is what unsigned looks like.
 
-- **macOS** refuses them outright, and the wording is misleading — it usually
-  says the app is *damaged*, which sounds like a corrupt file and is not. Either
-  right-click the app and choose **Open** (which offers a way through that
-  double-clicking does not), or clear the quarantine flag:
+- **macOS** refuses them outright, and the wording is misleading — it usually says
+  the app is *damaged*, which sounds like a corrupt file and isn't. Right-click the
+  app and choose **Open**, or clear the quarantine flag:
 
   ```bash
   xattr -dr com.apple.quarantine /Applications/Pixelcat.app
@@ -34,10 +72,44 @@ download; this is what unsigned looks like.
 
 - **Windows** shows a SmartScreen panel. **More info** → **Run anyway**.
 
-The cat asks for no permissions and talks to no network. On macOS it will ask
-for Accessibility if you want it to react to typing — that grant is what lets
-any app see keystrokes it did not receive itself, and declining costs you only
-the typing reactions.
+## Platform support
+
+| | macOS | Windows | Linux / X11 | Linux / Wayland |
+| --- | :---: | :---: | :---: | :---: |
+| Cursor tracking | ✅ | ✅ | ✅ | ✅ *(needs `input` group)* |
+| Typing & scroll reactions | ✅ *(needs Accessibility)* | ✅ | ✅ | ✅ *(needs `input` group)* |
+| AI agent reactions | ✅ | ✅ | ✅ | ✅ |
+| Peek while watching video | — | — | ✅ | ✅ |
+| Kept out of the taskbar | ✅ | ✅ | KDE only | KDE only |
+
+**Linux/Wayland** — one command, then log out and back in:
+
+```bash
+sudo usermod -aG input $USER
+```
+
+Wayland doesn't tell an unfocused app where your pointer is, so Pixelcat reads
+`/dev/input` directly. Without the group it still runs, but only reacts while the
+pointer is over the cat — and it says so in settings rather than silently doing
+nothing.
+
+**macOS** — the first launch asks for Accessibility. That grant is what lets any
+app see keystrokes it didn't receive itself; declining costs you only the typing
+and scroll reactions. Grant it in System Settings and the cat picks it up within
+a couple of seconds — no relaunch.
+
+## Privacy
+
+The cat talks to no network, at all. There is no telemetry, no update check, no
+analytics.
+
+Watching for keystrokes means the input reader can see every key on the machine,
+so it is built to see as little as possible: a key event is reduced to *"a key
+went down"* and **the key code is discarded immediately**. Nothing is buffered,
+logged, or written to disk. The cat only needs to know *that* you're typing.
+
+Agent detection reads transcript files your agent already writes to your own home
+directory, and the local process list. Neither leaves the machine.
 
 ## From source
 
@@ -45,578 +117,35 @@ the typing reactions.
 npm install
 npm start          # run it
 npm run dev        # run it with the settings window open
-npm run preview    # render a contact sheet of every palette x pattern
-npm run icons      # regenerate the app + tray icons from the sprite
-npm run desktop    # Linux desktop integration (see below)
+npm test           # the simulators — run these before believing a change
 npm run build      # package installers into dist/
 ```
+
+<details>
+<summary>Other scripts</summary>
+
+```bash
+npm run preview    # contact sheet of every palette × pattern
+npm run icons      # regenerate app + tray icons from the sprite itself
+npm run desktop    # Linux desktop integration (see below)
+```
+</details>
 
 ### Linux: `npm run desktop`
 
 Two things a Linux desktop has to be told, neither of which the app can say for
-itself. Undo both with `npm run desktop -- --remove`.
-
-**A desktop entry**, so the taskbar knows what the window is. A window carries an
-icon and every Linux task manager ignores it, using instead the icon of the
-desktop entry it matches the window's `WM_CLASS` against. From a checkout there
-is nothing to match, so the cat advertises itself as the X.Org logo. Packaged
-builds ship their own entry and need none of this.
-
-**A KWin rule**, so the taskbar stops listing it at all. Pixelcat is a tray app —
-a cat on the desktop, an icon in the tray — and has no business holding a taskbar
-slot too. Electron can't arrange that: `skipTaskbar` was marked unsupported on
-Linux in Electron 19 and removed in 20, because X11's
-`_NET_WM_STATE_SKIP_TASKBAR` has no Wayland equivalent. So the window manager is
-asked directly. KDE only, and skipped on other desktops — elsewhere, both windows
-will sit in the taskbar.
-
-(Declaring the window a toolbar type also works and is a trap: KWin takes the
-decorations with it, leaving the settings pane no close button.)
-
----
-
-## How it works
-
-### The cat is stored as palette slots, not colours
-
-`src/renderer/pet/sprites.js` holds the cat as a 32x32 grid of *slot* letters.
-A pixel knows it is `B` (fur), `M` (marking), `L` (light) or `N` (pink) — it
-never knows it is `#2b2b2b`.
-
-That's the whole reason "customise its colour and pattern" is cheap: a palette
-is a four-entry map and a pattern is a mask that repaints fur. 8 palettes x 5
-patterns = 40 cats out of one hand-drawn grid, and adding a ninth colour is four
-hex values, not another sprite sheet.
-
-Two rules keep it safe:
-
-- **Masks recolour, they never create.** A mask can turn fur into marking, but
-  it cannot add a pixel, so no pattern can deform the silhouette or leak past
-  the outline.
-- **Outlines are generated, not drawn.** The renderer dilates the alpha mask by
-  1px. Hand-authored outlines would need redrawing for every pose; generated
-  ones are consistent for free. (Comnyang's own site does the same thing in SVG
-  with `feMorphology`.)
-
-Eyes are drawn procedurally on top rather than baked in, because eye-follow
-needs per-frame control of the pupil — and once eyes are procedural, blink,
-half-lid and sleep are three lines each instead of three more grids.
-
-### Global input, and why Wayland needs a third path
-
-This is the part that decides whether a desktop pet works on someone's machine,
-and the naive design does not survive contact with Wayland.
-
-**What actually happens on Wayland** (measured on KDE, not assumed):
-
-- `screen.getCursorScreenPoint()` returned the *identical coordinate 60 times
-  out of 60 samples* while the mouse moved over a Wayland window. Wayland does
-  not tell an unfocused app where the pointer is; Electron reports the last
-  position the cursor was over an XWayland surface, and holds it until the
-  cursor crosses one again — at which point it leaps the whole way in a single
-  sample.
-- `uiohook-napi` fails outright with `XkbGetKeyboard failed to locate a valid
-  keyboard`, then delivers nothing.
-
-So there are three sources, and the pointer is assembled from all of them:
-
-| Source | Where it works | Gives |
-| --- | --- | --- |
-| `getCursorScreenPoint()` | Windows, macOS, Linux/X11 | exact cursor |
-| `uiohook-napi` | Windows, macOS (needs Accessibility), Linux/X11 | keys, scroll (notched on the way in — [see below](#windows-sends-the-same-firehose-and-does-not-admit-it)) |
-| `/dev/input` (evdev) | Linux incl. Wayland, needs `input` group | keys, scroll (wheel *and* fingers), raw mouse deltas |
-
-There is no "which source", because the honest answer on a real Wayland desktop
-is *all of them, some of the time*. Electron runs as an **XWayland** client, and
-XWayland's pointer is neither working nor frozen: `getCursorScreenPoint()` is
-exact while the cursor is over an X surface — including the cat's own window —
-and frozen the instant it crosses onto a native Wayland one.
-
-That third regime is what broke this repeatedly. The old code picked one source
-and latched: the first evdev delta flipped it to "estimated" and nothing could
-flip it back, so a native point that was telling the truth several times a
-second was discarded for the rest of the session, and the cat had no idea where
-the pointer was unless it was physically over its window.
-
-So there is **one estimate**, and everything that can say something true about
-it gets to correct it — the native point whenever it changes, DOM pointer events
-over our own window, raw evdev deltas integrated in between, and the screen
-edges, which the real cursor stops at and so does ours (shoving the mouse into a
-corner resyncs an axis exactly, and users do that constantly without being asked
-to).
-
-The estimate carries a **confidence**: how far wrong it expects to be. Dead
-reckoning drifts because the compositor applies pointer acceleration we cannot
-observe — so it is measured instead. Any tick where the native point *and* a raw
-delta both moved is a reading of that acceleration, and confidence decays with
-distance travelled times how badly that constant is still known. A fresh session
-loses faith quickly; a calibrated one holds it across a screen.
-
-Consumers then clear a bar instead of being handed a boolean, and that is the
-part that matters:
-
-- **Eye-follow** needs a direction, and a direction survives being somewhat
-  wrong. It takes a rough fix happily, which is why the cat now watches you
-  anywhere on the desktop.
-- **Petting, hovering and hearts** need a pixel, and take nothing but an exact
-  position — a DOM event, or a native point that genuinely moved.
-
-Conflating those two is what made every previous fix break the other half of the
-feature: making the cat trust the estimate made it purr at nobody, and making it
-distrust the estimate made it go blind.
-
-The cat is also its **own calibration target**. The renderer hands every DOM
-pointer position back to main, so each time the cursor approaches the window the
-estimate is re-anchored to a true position — precision matters most just before
-you touch the cat, and that is exactly the moment the truth is available.
-
-`node tools/cursor-sim.js` drives all of this through every session type — X11,
-X11 with evdev, frozen Wayland, XWayland — with a scripted pointer and a fake
-clock, and checks what it concluded against what was actually true. Every
-regression this has ever had was in a regime the machine doing the testing could
-not be in, so run it before believing a change.
-
-**Enabling full tracking on Linux/Wayland** — one command, then log out and in:
-
-```bash
-sudo usermod -aG input $USER
-```
-
-Without it the app still works, but only reacts while the pointer is over the
-cat (see below). It says so in settings rather than silently doing nothing.
-
-**Privacy:** the evdev reader can see every keystroke on the machine, so it
-deliberately sees as little as possible — key events are reduced to "a key went
-down" and **the key code is discarded immediately**. Nothing is buffered,
-logged, or written to disk. The cat only needs to know *that* you're typing.
-
-#### macOS asks for permission and then has to notice it was given
-
-libuiohook calls `AXIsProcessTrustedWithOptions` with the prompt flag set, so
-starting the hook is what puts macOS's "Pixelcat would like to control this
-computer" dialog on screen. Without the grant, `uIOhook.start()` throws
-`UIOHOOK_ERROR_AXAPI_DISABLED`.
-
-That was caught, written into the status as "denied", and that was the end of
-it — a dead end the app could enter and never leave. The user went to System
-Settings, granted the permission the app had *just asked them for*, came back,
-and nothing had changed. Nothing would change until they quit and relaunched,
-and nothing told them to.
-
-macOS applies an Accessibility grant to a process that is already running, so
-there was never anything to relaunch for. `input.js` now polls
-`systemPreferences.isTrustedAccessibilityClient(false)` every 2s after a denial
-and starts the hook the moment the grant lands. The `false` matters: it means
-*check, don't ask*. libuiohook has already shown the dialog, macOS shows it once
-per launch, and prompting on a two-second timer would either do nothing or stack
-dialogs forever.
-
-Two smaller things fell out of it. Only `UIOHOOK_ERROR_AXAPI_DISABLED` is
-reported as "denied" now — a run loop that could not be acquired is a different
-problem, and sending someone to grant a permission they already granted is worse
-than saying nothing. And the settings button, which was Linux-only, appears on
-macOS too and opens the Accessibility pane directly.
-
-### Touchpad scroll has to be reconstructed, not received
-
-Scrolling with a wheel is a hardware event: the mouse emits `REL_WHEEL` and
-there is nothing to work out. Scrolling on a laptop touchpad is **not an event
-at all** — it is an interpretation. The kernel reports only where each finger
-is (`EV_ABS` multitouch), and libinput decides in userspace that two of them
-moving together means scroll.
-
-Reading `/dev/input` bypasses libinput, which is the whole point on Wayland — so
-we inherit that job too. Without it the yarn ball answers only to a plugged-in
-mouse and the trackpad does nothing, which is exactly how this read: the
-touchpad here reports `EV=10001b`, with no `EV_REL` bit anywhere in it.
-
-So `evdev-linux.js` does what libinput does. It tracks live fingers by their
-multitouch slots, and while there are exactly **two**, averages their vertical
-travel per frame — averages rather than sums, because two fingers moving
-together are one scroll, and because it makes a pinch cancel out, which is right.
-
-Two details do most of the work:
-
-- **The threshold is a fraction of the pad, not a number of units.** Device
-  units have no fixed size — pads differ by roughly 5x in how many they report
-  per millimetre, and the range cannot be read without an ioctl Node has no way
-  to issue. So the pad's height is learned from the finger positions themselves,
-  which costs nothing and converges within a swipe or two. A guess is used until
-  then, and being 2x out merely makes the first swipe eager or lazy.
-- **It is notched, at most one report per 50ms.** A finger is continuous and
-  would otherwise report at the pad's full ~125Hz. Travel keeps accumulating in
-  between, so scrolling slowly makes the ticks sparse rather than absent — this
-  is what makes a touchpad feel like a wheel instead of a firehose.
-
-Devices that report a wheel of their own are left alone, so an Apple trackpad —
-whose driver hands over both touch data *and* a `REL_WHEEL` it derived from that
-same data — cannot be counted twice.
-
-`node tools/touch-scroll-sim.js` scripts the fingers — a pinch that must cancel,
-a re-grip that must not fire, a pad half the size of this one — and checks what
-came out. `node tools/scroll-probe.js` does the same job on real hardware, and
-separates the three ways this fails: devices that will not open, devices that
-open but say nothing, and fingers that arrive but are not read as a scroll.
-
-#### Windows sends the same firehose, and does not admit it
-
-Windows *does* deliver touchpad scroll as wheel messages, so none of the above
-is needed there — which is why it took a bug report to notice that the yarn ball
-did nothing on a Windows laptop while working perfectly with a mouse.
-
-A Windows Precision Touchpad is an **ultra-high-resolution** device, and
-Microsoft documents the consequence plainly: the default delta for one is
-**1**, not the 120 a wheel click sends. libuiohook computes its `rotation` by
-accumulating deltas and dividing by 120, keeping the remainder — so a two-finger
-drag arrives as a message per unit at the pad's full report rate, of which
-**119 out of every 120 carry `rotation: 0`**.
-
-Both halves of that broke the ball, and only together:
-
-- The renderer bats it once per report. At a hundred reports a second it went
-  straight to its maximum speed, hit the edge of the canvas, and stayed pinned
-  there for the whole gesture — re-kicked before it could ever hop. There was an
-  animation; it just had nowhere to go and nothing to watch.
-- `rotation: 0` says nothing about direction, so the side it rolled to was a
-  guess that fed back into itself and never corrected.
-
-So `input.js` notches the uiohook stream into the shape a wheel already has, at
-the same 50ms cadence `evdev-linux.js` gives a Linux touchpad, carrying the last
-direction that was actually *observed*. A real rotation still goes straight
-through the instant it arrives — a wheel click must not wait 50ms to be
-answered, and it is the only thing that ever teaches direction.
-
-`node tools/wheel-sim.js` replays both Windows streams through it on a fake
-clock, generated by transcribing libuiohook's own arithmetic rather than by
-guessing at its output, and checks the two properties that matter: a touchpad
-cannot report faster than a wheel notches, and a wheel click is never delayed.
-
-macOS gets the same treatment for free, and it turns out to want it: libuiohook
-reads `kCGScrollWheelEventDeltaAxis1` there, which is a **line** delta, so a slow
-trackpad drag scrolling less than one line at a time reports `rotation: 0` in
-exactly the same way. A line-granularity scroll still passes straight through
-untouched, so there is nothing to lose either way.
-
-One thing this cannot fix: because libuiohook discards the sign of a sub-notch
-step before handing anything over, a touchpad scroll that *reverses* carries the
-previous direction for its first 120 units and the ball sets off the wrong way
-before correcting. Remembering the last observed direction still beats
-remembering nothing — scrolling the same way twice is far more common than
-turning around — but it is a real wrongness and not a rounding error.
-
-### The window is click-through except where the cat is
-
-The pet window is bigger than the cat — the padding is the stage it acts on
-(bubbles above, timer beside, room to pounce). A window that size would eat
-every click in the corner of your screen, so it is click-through by default and
-`setIgnoreMouseEvents` is flipped off only while the cursor is over an opaque
-pixel.
-
-That hit test runs off the **cursor poll in main**, not renderer `mousemove`,
-because a click-through window receives no `mousemove` at all — the renderer
-would never learn the cursor had arrived. The renderer publishes the cat's
-opaque bounding box; main compares it against the polled cursor.
-
-Whether it may do that at all is a separate, deliberately **slow** decision. It
-is settled from accumulated evidence — how much of the pointer's real travel the
-native point managed to witness — reconsidered at most once a second, and it can
-only ever be taken away, never granted. The asymmetry is the point: losing it
-costs a window that absorbs clicks in its padding, which is irritating and
-survivable. Granting it wrongly costs the cat, because the window starts
-hit-testing against a point that is about to freeze somewhere else, and every
-click then falls straight through the cat forever. Gating this on whether the
-*current sample* happened to be exact is what made the window flip interactive
-and back several times a second on XWayland, so the cat could go untouchable
-mid-stroke.
-
-Where hit-testing is refused, the window simply stays interactive and the
-renderer drives touch from its own DOM pointer events, which are exact whenever
-the cursor is over the window. Local events take precedence over the global feed
-for 400ms after they arrive; the global feed fills the gaps. The trade-off is
-the window's rectangle, not just the cat, absorbing clicks — which is why the
-`input` group is worth the one command.
-
-### Behaviours are overlapping drives, not exclusive states
-
-`src/renderer/pet/pet.js` keeps continuous values — `heat`, `petMeter`,
-`hoverAmt`, `sleepiness` — that rise and decay independently. A state machine
-with one active state at a time reads like a vending machine; overlapping drives
-are why the cat can be half-asleep, blink, and still track your cursor.
-
-Squash-and-stretch pivots on the feet rather than the centre, so a squashed cat
-presses into the desk instead of floating.
-
-### AI agent reactions, without integrating with any agent
-
-The cat thinks along while Claude Code, Codex, Cursor, opencode, aider, goose
-and friends are working, and hops when they finish.
-
-This used to be inferred from CPU alone, and CPU is bad at this job in both
-directions. **An agent waiting on the model burns nothing**, so "thinking" read
-as "finished" and the cat celebrated mid-answer — then again at the next pause,
-and the next. Meanwhile a terminal that is merely being *typed into* redraws and
-burns CPU, so an idle session read as work. No amount of debouncing fixes a
-signal that is measuring the wrong thing; it only makes both failures slower.
-
-The fix is that the agents already write down what they are doing. They all
-persist a transcript so `--resume` works, it is appended to as the turn happens,
-and its last entry says outright whether the model is mid-turn or the turn ended.
-`src/main/agent-sessions.js` reads it — exact, instant, no configuration, and no
-cooperation from the agent.
-
-- **Claude Code** (`~/.claude/projects/*/*.jsonl`) — one assistant message is
-  split across several lines (thinking, text, one per tool call) and every line
-  carries that message's `stop_reason`. `tool_use` means still working; anything
-  else means the turn ended. Reading the content *blocks* instead would be wrong:
-  a mid-turn "Let me check the config" is its own line and looks exactly like a
-  final answer. Only `stop_reason` separates them.
-- **Codex** (`~/.codex/sessions/**/rollout-*.jsonl`) — states it outright, as
-  `event_msg` payloads `task_started` / `task_complete`.
-
-`src/main/agents.js` keeps CPU, demoted to covering the one gap transcripts have:
-a long tool call writes nothing for as long as it runs, and during exactly that
-gap the process tree is busy. So the two compose — transcripts drive, CPU covers
-while a session is silent — and agents that keep no readable transcript (aider,
-goose, amp) still work on CPU alone.
-
-Details that decide whether this feels alive or broken:
-
-- **Two speeds of "done".** A transcript-confirmed turn ending is a fact, so it
-  is announced in ~2s. A CPU lull is a guess and still has to persist ~8s and
-  follow enough work to have been a task at all.
-- **The whole process tree, not just the agent.** Most of what a turn costs is
-  spent in children — the test run, the build — while the parent sits at zero, so
-  measuring the parent alone missed the busiest parts of a turn. Reaped children
-  count too (`cutime`), which is how a finished test run still registers.
-- **`comm` is not enough.** An agent installed as an npm package runs as
-  `node .../claude-code/cli.js` and shows up as "node". Interpreter processes get
-  their arguments read; shells deliberately do not, since a `bash -c` command line
-  contains whatever the agent happened to run and would match itself constantly.
-- **A transcript outlives the process that wrote it.** A session closed mid-turn
-  says "working" forever, so a session only counts while its CLI is still running,
-  and a "working" session that has gone silent for minutes hands the decision back
-  to CPU — which can tell a long tool call from an abandoned terminal.
-- **…but a missing process list is not an empty one.** That "only counts while
-  its CLI is still running" check needs a process list, and where one cannot be
-  produced it is *skipped* rather than failed. Treating "we cannot see any
-  processes" as "no agent is running" is what kept Windows dead even for Claude
-  Code, whose transcript was on disk being right the whole time. The staleness
-  timeout still covers the abandoned-terminal case, in minutes instead of
-  instantly — a much cheaper failure than detecting nothing at all.
-- **CPU time deltas, not instantaneous %CPU.** An agent streaming a reply uses
-  CPU in bursts, so a sampled percentage flickers between 0 and 40 constantly and
-  the cat twitches. Accumulated jiffies over the interval are smooth. (macOS is
-  the exception: `ps` reports cumulative CPU only to the second, too coarse for a
-  1Hz poll, so its `%CPU` estimate is read alongside.)
-
-On Linux it reads `/proc` directly — no process spawn, so polling at 1Hz doesn't
-become the CPU load it's trying to measure.
-
-On macOS it deltas `ps` CPU time, and three details of BSD `ps` decide whether
-that works at all:
-
-- **`ps -o pid=,ppid=,time=` prints one column or three, depending.** In BSD,
-  an `=` takes the *whole rest of the argument* as that column's header — so this
-  would be asking for a single PID column headed `,ppid=,time=,args=`. Apple's
-  `ps` disables that (`#ifndef __APPLE__` in `keyword.c`) and splits on commas
-  like everyone else, so the format is fine. It is one `#ifdef` away from having
-  silently asked for nothing.
-- **TIME is `MMM:SS.hh`, not `hh:mm:ss`.** The minutes are *total* minutes and
-  never carry into an hours field, so `120:00.00` is two hours. Read left to
-  right it is five days.
-- **TIME carries hundredths**, and this used to claim it didn't. The old comment
-  said macOS resolved CPU "only to the second, too coarse for a 1Hz poll", and
-  reached for `%cpu` to compensate — but Apple's `cputime()` formats
-  `"%3ld:%02ld.%02ld"`, so the resolution is a centisecond, exactly a Linux
-  jiffy. Worse, the fallback it justified was actively harmful: BSD `%cpu` is a
-  **decaying average** over roughly the last minute, summed here across the whole
-  process tree, so a turn that had just finished went on reading as busy until it
-  decayed. For the agents with no transcript — aider, goose, amp, opencode —
-  "finished!" arrived tens of seconds late or never. It is gone; a cumulative
-  counter stops moving the moment the work does.
-
-`ps` is also invoked with `-ww` and with `$COLUMNS` stripped from its
-environment. Apple's `ps` already goes to unlimited width when stdout is not a
-terminal, which it never is here, but that decision sits downstream of a
-`$COLUMNS` lookup and this process inherits whatever shell launched it. A width
-inherited from someone's 80-column terminal would cut the tail off
-`node …/node_modules/@anthropic-ai/claude-code/cli.js` — the only part of that
-line that identifies an agent.
-
-`node tools/ps-sim.js` runs real `ps` output, in Apple's exact column layout,
-through the real parser and matcher.
-
-**Windows has neither.** The old code asked it for `ps` anyway, got `ENOENT`, and
-swallowed it once a second forever — which is why agent detection did nothing at
-all there. `wmic` is the answer every search returns and it is the wrong one now:
-disabled by default since Windows 11 23H2, removed outright at 25H2. So
-`win-proc.js` starts **one** PowerShell that keeps the loop itself and prints a
-`Win32_Process` snapshot down a pipe; Node pays for a string split. Three
-consequences worth knowing:
-
-- It samples every **2s**, not every 1s. A WMI enumeration is not cheap and CPU
-  is only the fallback signal — the agents that keep a readable transcript are
-  already answered exactly and for free. So the busy threshold is expressed as a
-  *rate* and scaled by the interval actually observed, and a snapshot that has
-  not refreshed yet is not re-deltaed into looking like a lull.
-- **An empty snapshot is never published.** A failed WMI query leaves the result
-  empty rather than stopping, and an empty snapshot terminated normally would
-  read as "this machine is running no processes" — vetoing every transcript and
-  putting Windows back where it started. Windows cannot have zero processes, so
-  empty means broken, and broken publishes nothing.
-- `claude.exe`, `claude.cmd` and `node.exe …\claude-code\cli.js` are the same
-  agent. Executable suffixes are stripped, and the command line is split
-  quote-aware, or `C:\Program Files\nodejs\node.exe` becomes two arguments and
-  the script path — the only thing identifying an agent under an interpreter —
-  comes out as `"C:\Program`.
-
-`node tools/agent-probe.js` prints both signals once a second — which transcripts
-are live and what they say, which process trees matched and what they burned — so
-a miss can be told apart from a mismatch. On Windows it also prints
-`procs: unavailable` when WMI cannot be reached, which is a working state, not a
-broken one: transcripts alone still cover Claude Code and Codex.
-
-`node tools/win-proc-sim.js` scripts a snapshot through the real parser and the
-real watcher — a command line containing a tab, a snapshot arriving a byte at a
-time, a machine with no WMI at all — because the PowerShell is the small half and
-everything that can actually be wrong is on this side of the pipe.
-
-### The yarn ball, and why it is drawn on top of the cat
-
-Scrolling bats a ball of yarn along the desk. A thread unspools back to the cat's
-paws and reels it in again when you stop, so it always ends up back at the flank.
-
-It replaced a paper sprite that was spawned per wheel tick and thrown downward
-under gravity. A long scroll buried the desk in rectangles that all fell out of
-frame: nothing to watch on the way, nothing left afterwards, and a mess in
-between. One ball on a spring gives the scroll somewhere to go *and* somewhere to
-come back to — and the return trip is not decoration, it is what keeps the effect
-on a canvas that only has 60px of padding either side of the cat.
-
-Three things that were wrong on the first attempt:
-
-- **The ball is drawn in front of the cat**, which sounds wrong and is not. It
-  sits on the paw line, not at head height, so the only thing it ever crosses is
-  the cat's front feet — which is where a ball on a desk is. Drawing it *behind*
-  was tried first: the cat is 128px of opaque sprite, so rolling inward made the
-  ball vanish for most of its journey. Half the effect, invisible.
-- **It rests at the flank, not at the paws.** Resting in front of the paws looks
-  tidier standing still, but the ball is 21px against a 128px cat and it covers
-  the belly markings the whole time it is out.
-- **The physics was tuned against the real canvas, not by feel.** Travel and
-  settling time pull against each other, and the spring constant matters far less
-  than the impulse cap and the drag — sweeping all three found the trio that gets
-  the ball right across the cat and back to rest 2.5s after the last scroll, just
-  as it starts to fade.
-
-The ball is its own sprite rather than a particle, because particles are one flat
-colour and a ball whose wrap you cannot see turning does not read as rolling — it
-reads as a dot sliding sideways. Four frames step the wrap one pixel along; the
-cycle runs backwards when it rolls the other way. Its silhouette is a real circle
-rather than a square with the corners knocked off, which at 7px is the whole
-difference between a ball and a die.
-
-### The pomodoro is worn, not displayed
-
-A focus round used to put a `FOCUS 24:51` banner beside the cat. It was the only
-thing on screen that looked like a piece of UI rather than a pet, and it spent
-that space telling you something a clock already tells you.
-
-Now the cat puts a **headband** on for a focus round and takes it off for the
-break. That is the entire readout, and it says the one thing worth saying —
-heads down — in the cat's own vocabulary. It comes with the same narrowed eyes
-the cat uses when an agent is working, applied through `max()` so the cat still
-blinks: never blinking for 25 minutes is a stare, not concentration.
-
-The band is painted over fur slots only, never the generated outline — filling
-whole rows would eat the rim the sprite needs to stay legible against an
-arbitrary desktop. Its knot is the one place anything adds pixels *outside* the
-silhouette, which patterns are forbidden from doing, because an accessory that
-stops at the skull is just a stripe.
-
-Removing the banner meant removing a control, though: clicking it was the only
-way to stop a running round, and the settings window's button said
-`START POMODORO` whether or not one was running, because nothing ever told it
-otherwise. So the clock and the controls moved somewhere a clock belongs:
-
-- **Settings** shows `Focus — 12:34 left · round 2 of 4` on the same one-second
-  feed the cat gets, with `STOP POMODORO` and `RESET ROUND`.
-- **Reset restarts the phase you are in**, not the whole cycle. The reason to
-  reach for it is an interruption partway through a round, and throwing away the
-  rounds already banked would be a strange punishment for being interrupted.
-- **The tray menu counts in minutes, not `mm:ss`.** A tray menu is a *static*
-  menu — `setContextMenu` paints it once — so a seconds countdown would freeze at
-  whatever it read when the menu was last built. It is rebuilt only when the
-  minute actually changes, rather than sixty times an hour for nothing.
-
-Both menus draw their pomodoro entries from one function. They were written out
-twice before, with only the tray copy kept in sync, so the cat's own right-click
-menu could offer "Start Pomodoro" in the middle of a round.
-
-### Position means the CAT, not its window
-
-`settings.position` is the sprite's own top-left on screen. The window is larger
-than the cat (padding is the stage for bubbles and pouncing), so aligning the
-*window* to a requested point parks the cat ~60px in from every screen edge —
-you can never reach the corner.
-
-Placing the window off-screen to compensate does not work: KWin, like most
-window managers, refuses a negative position and silently clamps it back
-(verified — asking for `-60,-70` produced a window at `0,0`).
-
-So the window always stays fully on-screen and any shortfall is handed to the
-renderer as `catOffset`: the sprite slides *within* its own window to reach the
-true edge. Snapping to a corner now lands the cat flush against it.
-
-One consequence: at the top edge, "above the cat" is off-screen, so speech
-bubbles flip to below the cat automatically.
-
-### Dragging uses relative deltas, never the global cursor
-
-Drag is driven by pointer capture and `movementX/Y` from the renderer, and main
-moves the window by those deltas. Absolute positioning against the global cursor
-looks simpler and breaks badly: on Wayland that cursor is frozen, so the cat
-teleports to one point, and a lost mouse-up leaves the drag latched — which
-silently overrides `setPosition`, making the position presets look broken.
-Pointer capture also guarantees move/up events keep arriving once the pointer
-leaves the window. A watchdog clears a stuck drag flag regardless.
-
-### Reminders live in main
-
-Scheduling is wall-clock based (compared against `Date.now()`), not accumulated
-`setInterval` ticks — so a laptop that sleeps for two hours fires **once** on
-wake rather than 120 times or never. They live in the main process because that
-is the one that survives: a renderer reload must not reset your Pomodoro round.
-
----
-
-## Layout
-
-```
-src/
-  main/
-    index.js       app lifecycle, pet window, click-through hit test
-    input.js       two-tier input with honest degradation
-    reminders.js   stretch / water / messages / pomodoro
-    store.js       atomic JSON settings
-    preload.js     allow-listed IPC bridge
-  renderer/
-    pet/           sprites.js, cat.js (renderer), pet.js (behaviours)
-    settings/      controls + live preview using the same renderer
-tools/
-  lib.mjs          build-time rasteriser + zero-dep PNG encoder
-  preview.mjs      palette x pattern contact sheet
-  make-icons.mjs   app + tray icons, generated from the sprite itself
-  cursor-sim.js    the three Linux session regimes, simulated
-  install-desktop-integration.mjs  desktop entry + KWin rule (Linux, from source)
-.github/workflows/
-  release.yml      one build job per OS — see the file for why it must be
-```
-
-`tools/` renders the cat in Node using the same sprite data the app uses, so the
-icon can never drift from the cat it depicts.
-
-## Editing the cat
+itself. Undo both with `npm run desktop -- --remove`. **Packaged builds need none
+of this** — it's only for running from a checkout.
+
+- **A desktop entry**, so the taskbar knows what the window is. Linux task managers
+  ignore a window's own icon and use the desktop entry matched against its
+  `WM_CLASS`; with nothing to match, the cat advertises itself as the X.Org logo.
+- **A KWin rule**, so the taskbar stops listing it at all. Pixelcat is a tray app
+  and has no business holding a taskbar slot. Electron can't arrange this —
+  `skipTaskbar` was removed on Linux in Electron 20 — so the window manager is
+  asked directly. KDE only.
+
+### Editing the cat
 
 Edit the grids in `src/renderer/pet/sprites.js`, then:
 
@@ -624,43 +153,59 @@ Edit the grids in `src/renderer/pet/sprites.js`, then:
 npm run preview && npm run icons
 ```
 
-`preview` validates that every row is exactly 32 characters before rendering —
-a miscounted row is the single easiest mistake to make here, and it fails loudly
-instead of drawing a subtly lopsided cat.
+`preview` validates that every row is exactly 32 characters before rendering, so
+a miscounted row fails loudly instead of drawing a subtly lopsided cat.
+
+## How it works
+
+The cat is stored as **palette slots, not colours** — a pixel knows it is fur or
+marking or light, never `#2b2b2b` — which is why 40 cats fall out of one grid and
+a ninth colour costs four hex values. Outlines are generated by dilating the alpha
+mask, so they can never drift from the sprite. Behaviours are overlapping drives
+rather than exclusive states, which is why the cat can be half-asleep, blink, and
+still track your cursor.
+
+The hard parts are the ones that touch the OS: assembling one cursor estimate from
+three unreliable sources on Wayland, reconstructing touchpad scroll that the kernel
+never reports as scroll, and detecting agent turns from transcripts rather than the
+CPU signal that lies in both directions.
+
+📖 **[AGENTS.md](AGENTS.md)** documents all of it — the architecture, the
+invariants that must not be broken, and the measurements behind each decision.
 
 ## Known limits
 
-- Global typing detection does not work in native Wayland apps (see table
-  above). Cursor reactions are unaffected.
-- macOS needs Accessibility permission granted manually for typing and scroll
-  reactions. The app prompts for it, opens the pane for you from settings, and
-  picks the grant up within a couple of seconds — no relaunch.
-- Unsigned builds: macOS and Windows will warn on first launch until the
-  binaries are code-signed. See [Download](#the-builds-are-not-code-signed).
-- Peek mode is Linux only. It works out that something is playing by asking the
-  desktop who holds a "don't blank the screen" lock, and there is no equivalent
-  wired up for macOS or Windows yet.
-- The macOS build has never been launched by anyone. CI proves it packages; it
-  cannot prove it runs. Its two known-wrong things — the `%cpu` fallback built
-  on a false claim about `ps`, and an Accessibility denial the app could not
-  recover from — were found by reading Apple's `ps` and libuiohook's sources and
-  are covered by `ps-sim.js`, but **nobody has confirmed them on real macOS**.
-- Windows has now been run, and the two things it reported — the yarn ball not
-  answering a touchpad, and agent detection doing nothing at all — are fixed.
-  Both fixes were derived from Microsoft's documentation and from libuiohook's
-  own source, and are covered by `wheel-sim.js` and `win-proc-sim.js`, which
-  script the platform rather than requiring it. **Nobody has confirmed them on
-  real Windows.** That is the honest status: reasoned and tested, not witnessed.
-- Agent detection on Windows sees Windows processes only. An agent running
-  **inside WSL** is invisible to it, and its transcripts live in the WSL home
-  rather than `C:\Users\…`, so neither signal reaches the cat.
-- Where WMI cannot be reached at all (some locked-down machines disable it), the
-  cat still detects Claude Code and Codex from their transcripts, and detects
-  nothing else — aider, goose, amp and opencode keep no transcript to read, so
-  they need the process list. `node tools/agent-probe.js` says which state you
-  are in.
-- On Linux the app cannot keep itself out of the taskbar — `skipTaskbar` was
-  removed from Electron on Linux in v20. `npm run desktop` installs a KWin rule
-  that does it on KDE; on other desktops both windows will show a taskbar entry.
-  macOS and Windows need none of this: the dock icon is already suppressed with
-  `LSUIElement`, and `skipTaskbar` works on Windows.
+- **The macOS build has never been launched by anyone.** CI proves it packages; it
+  cannot prove it runs. Its platform-specific paths were derived from Apple's `ps`
+  and libuiohook's sources and are covered by simulators, but nobody has confirmed
+  them on real hardware.
+- **Windows has been run**, and both things it reported — touchpad scroll and agent
+  detection — are fixed and simulator-covered, but the fixes themselves haven't been
+  witnessed on a real Windows machine.
+- Global typing detection doesn't reach native Wayland apps. Cursor reactions are
+  unaffected.
+- Agent detection on Windows sees Windows processes only — an agent running **inside
+  WSL** is invisible to it.
+- Peek mode is Linux only. It infers playback from power-management inhibitions,
+  and there's no equivalent wired up for macOS or Windows yet.
+- There is no drag. The cat is placed by coordinates and snap buttons, on purpose —
+  dragging could never reach the screen edges.
+
+Run `node tools/agent-probe.js` to see exactly what the cat can and can't see on
+your machine.
+
+## Contributing
+
+Issues and PRs welcome. Two things worth knowing before you open one:
+
+1. **Run `npm test` first.** The simulators script every platform regime — X11,
+   frozen Wayland, XWayland, Windows precision touchpads, Apple `ps` output — on a
+   fake clock. Every regression this project has ever had was in a regime the
+   machine doing the testing could not physically be in.
+2. **Read [AGENTS.md](AGENTS.md).** Most of the non-obvious code is non-obvious for
+   a documented reason, and the invariants section lists the things that look
+   redundant and are not.
+
+## License
+
+MIT © Lakshay Gupta
