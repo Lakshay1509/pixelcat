@@ -19,6 +19,7 @@ const os = require("os");
 const { execFile } = require("child_process");
 
 const store = require("./store");
+const kwinRule = require("./kwin-rule");
 const input = require("./input");
 const { Reminders } = require("./reminders");
 const { AgentWatcher } = require("./agents");
@@ -694,6 +695,11 @@ function wireIpc() {
   });
 
   ipcMain.handle("get-input-status", () => input.status);
+
+  // Offered rather than done: this writes to a config file the user owns and
+  // shares with every other window rule they have. See kwin-rule.js.
+  ipcMain.handle("get-taskbar-rule", () => kwinRule.status());
+  ipcMain.handle("set-taskbar-rule", (_e, enabled) => kwinRule.set(!!enabled));
 
   // Linux only: adding the user to the `input` group is what makes global
   // typing detection possible under Wayland. It needs privilege, so it is an

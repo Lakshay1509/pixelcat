@@ -70,6 +70,16 @@
   // towards it so the cat walks off the edge rather than teleporting.
   let peekTo = { x: 0, y: 0 };
   let peekAmt = 0;
+  /*
+   * Where the sprite is drawn THIS FRAME relative to catX/catY: the peek slide,
+   * plus the hop and the yarn lean. Kept out here rather than local to the loop
+   * because headPoint() needs them, and so does the agent-finished handler,
+   * which fires between frames.
+   */
+  let peekX = 0;
+  let peekY = 0;
+  let ox = 0;
+  let oy = 0;
   let peekWanted = 0;
 
   let lastKey = 0;
@@ -339,10 +349,19 @@
     });
   }
 
+  /*
+   * Where the head IS, not where it would be if the cat were sitting still.
+   *
+   * This used to read catX/catY alone, which is the sprite's resting position —
+   * so everything anchored to the head stayed behind the moment the cat moved.
+   * Peek mode made it obvious: the cat slides off to the screen edge and its
+   * thinking dots stayed hanging in the middle of the desktop. Hearts, steam,
+   * zzz and the finished-sparks all had the same fault, less visibly.
+   */
   function headPoint() {
     return {
-      x: catX + A.headTop.x * L.scale,
-      y: catY + A.headTop.y * L.scale,
+      x: catX + peekX + ox + A.headTop.x * L.scale,
+      y: catY + peekY + oy + A.headTop.y * L.scale,
     };
   }
 
@@ -528,8 +547,8 @@
     // off the screen edge.
     peekAmt += (peekWanted - peekAmt) * Math.min(1, dt * 3.5);
     if (Math.abs(peekWanted - peekAmt) < 0.002) peekAmt = peekWanted;
-    const peekX = peekTo.x * peekAmt;
-    const peekY = peekTo.y * peekAmt;
+    peekX = peekTo.x * peekAmt;
+    peekY = peekTo.y * peekAmt;
     const hiding = peekAmt > 0.5;
 
     ctx.clearRect(0, 0, L.width, L.height);
@@ -668,8 +687,8 @@
     squashY += Math.sin(t / 620) * 0.018 * calm;
 
     // position offsets
-    let ox = 0;
-    let oy = 0;
+    ox = 0;
+    oy = 0;
     if (t < jumpUntil) {
       const p = 1 - (jumpUntil - t) / 700;
       oy -= Math.abs(Math.sin(p * Math.PI * 2)) * 26;
@@ -737,10 +756,10 @@
       // Same problem the speech bubble has: flush against the top of the screen,
       // "above the head" is off-screen. Drop them under the cat instead.
       const above = Math.round(h.y - s * 6);
-      const below = Math.round(catY + peekY + CatSprites.H * L.scale + s);
+      const below = Math.round(catY + peekY + oy + CatSprites.H * L.scale + s);
       for (let i = 0; i < 3; i++) {
-        const x = Math.round(h.x - s * 4 + i * s * 3) + ox;
-        const y = (above >= 0 ? above : below) + oy;
+        const x = Math.round(h.x - s * 4 + i * s * 3);
+        const y = above >= 0 ? above : below;
         ctx.globalAlpha = 1;
         ctx.fillStyle = "#14141a";
         ctx.fillRect(x - 1, y - 1, s + 2, s + 2);

@@ -355,6 +355,18 @@
       btn.textContent = "ENABLE FULL INPUT TRACKING";
     });
 
+    $("taskbarRule").addEventListener("click", async () => {
+      const btn = $("taskbarRule");
+      const out = $("taskbarResult");
+      btn.disabled = true;
+      const r = await window.pet.invoke("set-taskbar-rule", !taskbarInstalled);
+      out.hidden = false;
+      out.textContent = r.message;
+      out.className = r.ok ? "note" : "note warn";
+      btn.disabled = false;
+      await showTaskbarRule();
+    });
+
     $("pomoToggle").addEventListener("click", () =>
       window.pet.send("action", { type: "pomodoro-toggle" })
     );
@@ -433,5 +445,6 @@
     const refresh = async () => showInputStatus(await window.pet.invoke("get-input-status"));
     await refresh();
     setInterval(refresh, 2000);
+    await showTaskbarRule();
   })();
 })();

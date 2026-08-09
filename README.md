@@ -493,9 +493,6 @@ instead of drawing a subtly lopsided cat.
 - Peek mode is Linux only. It works out that something is playing by asking the
   desktop who holds a "don't blank the screen" lock, and there is no equivalent
   wired up for macOS or Windows yet.
-- "Launch at login" does nothing on Linux. `app.setLoginItemSettings` is
-  implemented on macOS and Windows only; on Linux it does not fail, it silently
-  saves a preference that has no effect.
 - The Windows and macOS builds have never been launched by anyone. CI proves
   they package; it cannot prove they run.
 - On Linux the app cannot keep itself out of the taskbar — `skipTaskbar` was

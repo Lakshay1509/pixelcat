@@ -28,11 +28,12 @@
  * Everything written here is under the user's own config, listed on the way
  * past, and removed by --remove.
  */
-import { writeFileSync, readFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
@@ -44,13 +45,7 @@ if (process.platform !== "linux") {
 }
 
 const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local/share");
-const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 const entryPath = join(dataHome, "applications", "pixelcat.desktop");
-const rulesPath = join(configHome, "kwinrulesrc");
-
-// Fixed rather than random, which is what makes re-running this replace the
-// rule instead of stacking up a new copy of it every time.
-const RULE_ID = "b6f1c3d2-5a47-4e19-9c8b-3d2e1f0a7c64";
 
 // --- 1. desktop entry -------------------------------------------------------
 function desktopEntry() {
@@ -93,85 +88,19 @@ StartupWMClass=pixelcat
 }
 
 // --- 2. kwin rule -----------------------------------------------------------
-const isKDE = () =>
-  process.env.KDE_FULL_SESSION === "true" ||
-  /kde/i.test(process.env.XDG_CURRENT_DESKTOP || "");
-
-/*
- * kwinrulesrc is INI, and it is SHARED — every window rule the user has ever
- * made lives in it. So this parses what is there, replaces only our own
- * section, and writes the rest back untouched. Rewriting the file wholesale
- * would silently delete rules that took someone an afternoon to get right.
- */
-function parseIni(text) {
-  const sections = [];
-  let current = null;
-  for (const line of text.split("\n")) {
-    const header = /^\[(.+)\]\s*$/.exec(line);
-    if (header) {
-      current = { name: header[1], lines: [] };
-      sections.push(current);
-    } else if (current) {
-      current.lines.push(line);
-    }
-  }
-  return sections;
-}
+// Delegated to src/main/kwin-rule.js rather than reimplemented here, so the
+// button in the settings window and this script cannot drift apart. tools/ is
+// excluded from the packaged app; src/ is not, which is why the shared copy
+// lives there and not the other way round.
+const { status, set } = createRequire(import.meta.url)("../src/main/kwin-rule.js");
 
 function kwinRule() {
-  if (!isKDE()) {
-    console.log(`not a KDE session — skipping the window rule (${rulesPath} untouched)`);
+  if (!status().supported) {
+    console.log("not a KDE session — skipping the window rule");
     return;
   }
-
-  const sections = existsSync(rulesPath) ? parseIni(readFileSync(rulesPath, "utf8")) : [];
-  const kept = sections.filter((s) => s.name !== RULE_ID && s.name !== "General");
-
-  if (!remove) {
-    kept.push({
-      name: RULE_ID,
-      lines: [
-        "Description=Pixelcat — tray only, no taskbar entry",
-        // wmclassmatch=1 is "exact", and matching the class alone (rather than
-        // the instance+class pair) is what makes one rule cover both the cat's
-        // window and its settings pane.
-        "wmclass=pixelcat",
-        "wmclasscomplete=false",
-        "wmclassmatch=1",
-        // 2 is "Force" — the rule wins over whatever the app asks for, which
-        // matters because the app asks for the opposite on every platform.
-        "skiptaskbar=true",
-        "skiptaskbarrule=2",
-        "",
-      ],
-    });
-  }
-
-  const ruleIds = kept.filter((s) => s.name !== "$Version").map((s) => s.name);
-  const out = [
-    "[General]",
-    `count=${ruleIds.length}`,
-    `rules=${ruleIds.join(",")}`,
-    "",
-    ...kept.flatMap((s) => [`[${s.name}]`, ...s.lines]),
-  ].join("\n");
-
-  mkdirSync(dirname(rulesPath), { recursive: true });
-  writeFileSync(rulesPath, out.endsWith("\n") ? out : `${out}\n`);
-  console.log(`${remove ? "removed rule from" : "wrote rule to"} ${rulesPath}`);
-
-  // Rules are read at startup, so a running KWin has to be told. Best effort:
-  // without this the rule still applies, just not until the next login.
-  for (const [bin, args] of [
-    ["qdbus", ["org.kde.KWin", "/KWin", "reconfigure"]],
-    ["qdbus6", ["org.kde.KWin", "/KWin", "reconfigure"]],
-    ["dbus-send", ["--session", "--dest=org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure"]],
-  ]) {
-    try {
-      execFileSync(bin, args, { stdio: "ignore" });
-      break;
-    } catch {}
-  }
+  const r = set(!remove);
+  console.log(r.ok ? `${remove ? "removed" : "wrote"} the KWin rule` : r.message);
 }
 
 desktopEntry();

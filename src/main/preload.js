@@ -34,6 +34,8 @@ const INVOKE = [
   "get-input-status",
   "get-catalog",
   "grant-input-access",
+  "get-taskbar-rule",
+  "set-taskbar-rule",
 ];
 
 contextBridge.exposeInMainWorld("pet", {
