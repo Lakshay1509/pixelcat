@@ -391,11 +391,20 @@ function openSettings() {
     minWidth: 560,
     minHeight: 560,
     title: "Pixelcat",
-    // The only window that ever reaches a taskbar — the cat itself sets
-    // skipTaskbar. Without this it inherits Electron's own default icon, so an
-    // unpackaged run advertises itself as a generic Electron app. Packaged
-    // builds get their icon from the desktop entry instead, which is why this
-    // was invisible until someone ran it from source.
+    /*
+     * No taskbar button, matching the cat's own window and the dock icon macOS
+     * is already told to suppress (LSUIElement). This is a tray app: the whole
+     * of it is a cat sitting on the desktop, and a desktop pet that also claims
+     * a slot in the taskbar has taken up residence twice.
+     *
+     * Nothing becomes unreachable. The tray icon opens this window, so does
+     * double-clicking the cat, and so does launching the app a second time —
+     * `second-instance` calls openSettings rather than starting a rival copy.
+     */
+    skipTaskbar: true,
+    // Still worth setting despite the above: it is the title bar's icon, the
+    // alt-tab icon, and on Windows the one the taskbar uses when grouping. An
+    // unpackaged run without it advertises itself as a generic Electron app.
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#141418",
     autoHideMenuBar: true,
