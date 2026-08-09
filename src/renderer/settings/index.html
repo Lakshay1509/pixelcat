@@ -58,16 +58,6 @@
         <p id="grantResult" class="note" hidden></p>
       </section>
 
-      <section id="taskbarSection" hidden>
-        <h2>Taskbar</h2>
-        <p class="note">
-          The cat lives in the tray, but KDE lists its windows in the taskbar as
-          well. Pixelcat cannot refuse that itself, so this asks KWin to hide
-          them — a window rule you can also see and delete in System Settings.
-        </p>
-        <button id="taskbarRule" class="btn">KEEP OUT OF THE TASKBAR</button>
-        <p id="taskbarResult" class="note" hidden></p>
-      </section>
 
       <section>
         <h2>AI agents</h2>
@@ -142,6 +132,16 @@
         <div class="toggles">
           <label class="check"><input type="checkbox" id="alwaysOnTop" /> <span>Always on top</span></label>
           <label class="check"><input type="checkbox" id="launchAtLogin" /> <span>Launch at login</span></label>
+        </div>
+        <div id="taskbarSection" hidden>
+          <p class="note">
+            The cat lives in the tray, but KDE lists its windows in the taskbar
+            as well. Pixelcat cannot refuse that itself, so this asks KWin to
+            hide them — a window rule you can also see and delete in KDE's own
+            System Settings.
+          </p>
+          <button id="taskbarRule" class="btn">KEEP OUT OF THE TASKBAR</button>
+          <p id="taskbarResult" class="note" hidden></p>
         </div>
       </section>
     </main>
