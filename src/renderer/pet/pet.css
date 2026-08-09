@@ -124,7 +124,17 @@ canvas#stage {
   left: 50%;
   top: 6px;
   transform: translateX(-50%);
-  max-width: 200px;
+  /*
+   * Sized by its text, not by the room left over beside it. The renderer sets
+   * `left` in pixels, and an absolutely positioned box laid out that way is
+   * offered only the space between `left` and the edge of the window — so near
+   * the right-hand edge, which is where a desktop pet usually lives, the note
+   * collapsed into a narrow column and wrapped mid-word.
+   */
+  width: max-content;
+  /* Never wider than the window that clips it: 200px was wider than the whole
+     184px stage at the default size. */
+  max-width: calc(100% - 8px);
   padding: 4px 8px;
   color: #f4efe6;
   background: rgba(20, 20, 26, 0.86);

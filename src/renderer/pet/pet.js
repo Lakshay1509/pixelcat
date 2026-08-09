@@ -806,11 +806,23 @@
     // Centred on the cat, but nudged back inside when the cat is flush against a
     // screen edge — out there half the bubble hangs outside its own window and
     // is simply clipped away, which ate the right-hand half of every message.
+    const headX = catX + peekX + ox + (CatSprites.W * L.scale) / 2;
     const half = (bubbleEl.offsetWidth || 0) / 2;
-    bubbleEl.style.left = `${clamp(catX + peekX + (CatSprites.W * L.scale) / 2 + ox, half + 2, L.width - half - 2)}px`;
+    bubbleEl.style.left = `${clamp(headX, half + 2, L.width - half - 2)}px`;
     bubbleEl.style.top = flip
       ? `${catY + peekY + CatSprites.H * L.scale + oy - 4}px`
       : `${catY + peekY + oy - 6}px`;
+
+    /*
+     * The pinned note belongs to the CAT too, and used to be placed from the
+     * WINDOW — top centre, fixed. That looks identical while the cat is sitting
+     * still and comes apart the moment it moves: peek slides the sprite off to
+     * a screen edge and the note stays behind, hanging over the very video the
+     * cat just got out of the way of. It takes the same offsets the sprite does.
+     */
+    const pinHalf = (pinEl.offsetWidth || 0) / 2;
+    pinEl.style.left = `${clamp(headX, pinHalf + 2, L.width - pinHalf - 2)}px`;
+    pinEl.style.top = `${6 + peekY + oy}px`;
   }
 
   requestAnimationFrame(frame);

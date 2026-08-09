@@ -425,6 +425,22 @@
     drawPreview();
   });
 
+  /*
+   * Only shown where it can do anything. A button that silently does nothing on
+   * GNOME, or on macOS, is worse than no button — so main reports whether the
+   * rule is even meaningful here and the whole block stays hidden when it isn't.
+   */
+  let taskbarInstalled = false;
+  async function showTaskbarRule() {
+    const { supported, installed } = await window.pet.invoke("get-taskbar-rule");
+    $("taskbarSection").hidden = !supported;
+    if (!supported) return;
+    taskbarInstalled = installed;
+    $("taskbarRule").textContent = installed
+      ? "PUT IT BACK IN THE TASKBAR"
+      : "KEEP OUT OF THE TASKBAR";
+  }
+
   (async function init() {
     [S, catalog] = await Promise.all([
       window.pet.invoke("get-settings"),
