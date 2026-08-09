@@ -41,7 +41,7 @@ the screen instead of another notification you dismiss.
 | **Knows your AI agent** | Thinking dots while Claude Code, Codex, Cursor, opencode, aider, goose or amp are working; a hop and a "finished!" when the turn ends. No integration, no config, no API key. |
 | **Pomodoro you can feel** | The cat puts a headband on for a focus round and takes it off for the break. That's the whole readout. Clock and controls live in settings and the tray. |
 | **Reminders** | Stretch and water on wall-clock intervals, plus scheduled messages and a pinned note above its head. |
-| **Stays out of the way** | Click-through everywhere except the cat itself. Start a video and it slides to the screen edge until you're done *(Linux)*. |
+| **Stays out of the way** | Click-through everywhere except the cat itself. Start a video and it slides to the screen edge until you're done. |
 | **40 cats** | 8 palettes × 5 patterns, 2×–10× size, all from one hand-drawn 32×32 grid. |
 | **Costs nothing** | Two runtime dependencies. Zero network calls. Reads `/proc` rather than spawning processes to watch CPU. |
 
@@ -79,7 +79,7 @@ download; this is what unsigned looks like.
 | Cursor tracking | ✅ | ✅ | ✅ | ✅ *(needs `input` group)* |
 | Typing & scroll reactions | ✅ *(needs Accessibility)* | ✅ | ✅ | ✅ *(needs `input` group)* |
 | AI agent reactions | ✅ | ✅ | ✅ | ✅ |
-| Peek while watching video | not yet | not yet | ✅ | ✅ |
+| Peek while watching video | ✅ | ✅ *(Win 10 1809+)* | ✅ | ✅ |
 | Kept out of the taskbar | ✅ | ✅ | KDE only | KDE only |
 
 **Linux/Wayland** — one command, then log out and back in:
@@ -181,20 +181,33 @@ invariants that must not be broken, and the measurements behind each decision.
   them on real hardware.
 - **Windows has been run**, and both things it reported — touchpad scroll and agent
   detection — are fixed and simulator-covered, but the fixes themselves haven't been
-  witnessed on a real Windows machine.
+  witnessed on a real Windows machine. The same goes for peek mode on both macOS and
+  Windows: written against Apple's and Microsoft's documented behaviour, covered by
+  simulators, never yet seen moving a cat.
 - Global typing detection doesn't reach native Wayland apps. Cursor reactions are
   unaffected.
 - Agent detection on Windows sees Windows processes only — an agent running **inside
   WSL** is invisible to it.
-- Peek mode is Linux only *so far*. It infers playback from power-management
-  inhibitions; macOS exposes the same thing through `pmset -g assertions` and it
-  simply hasn't been wired up yet. Windows is the harder one — enumerating who
-  holds a display-sleep request needs elevation.
+- Peek mode is a guess, and it guesses differently on each platform because no OS
+  will say "a video is playing". Linux and macOS read who is holding the screen
+  awake (power-management inhibitions, and `pmset -g assertions`); Windows reads
+  the system media session list instead, because the equivalent power request
+  there can only be enumerated with administrator rights. Consequences worth
+  knowing:
+  - **Windows** only sees apps that register with the media controls — the ones
+    that appear in the flyout on the volume popup. Browsers, VLC and Spotify do;
+    a bare `<video>` in some niche player may not. It needs Windows 10 1809 or
+    newer.
+  - **Anywhere**, audio can look like video. A browser playing music holds the
+    same screen-awake assertion a browser playing a film does. Known music-only
+    players are filtered by name; a player not on that list can hide the cat while
+    you listen to an album.
 - There is no drag. The cat is placed by coordinates and snap buttons, on purpose —
   dragging could never reach the screen edges.
 
 Run `node tools/agent-probe.js` to see exactly what the cat can and can't see on
-your machine.
+your machine, and `node tools/watch-probe.js` to see why peek mode is or isn't
+firing — it prints the raw answer your system gives, next to the verdict.
 
 ## Contributing
 

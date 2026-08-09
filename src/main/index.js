@@ -94,6 +94,25 @@ function applyAgentSettings() {
   );
 }
 
+/*
+ * Peek mode is the one behaviour whose cost is a PROCESS, not a branch: a probe
+ * forked every five seconds on Linux and macOS, and a resident PowerShell on
+ * Windows. Turning it off in settings used to leave all of that running and only
+ * ignore the answer at the point of use, which is a bill for a feature nobody
+ * asked to keep — so the detector is started and stopped with the setting.
+ *
+ * Stopping it also has to bring the cat back. `setPeek` is edge-triggered, so a
+ * detector switched off mid-video would otherwise never send the falling edge,
+ * and the cat would stay parked past the screen edge until something else moved
+ * it.
+ */
+function applyPeekSettings() {
+  if (!watcher || !petWin || petWin.isDestroyed()) return;
+  if (store.get().behaviours.peekMode !== false) return watcher.start();
+  watcher.stop();
+  setPeek(false);
+}
+
 function displayInfo() {
   const primaryId = screen.getPrimaryDisplay().id;
   return screen.getAllDisplays().map((d, i) => ({
@@ -688,6 +707,7 @@ function wireIpc() {
     if (patch.position && petWin && !petWin.isDestroyed()) placeCat(patch.position);
     if (patch.reminders) reminders.resetCadence();
     if (patch.agentNames !== undefined || patch.behaviours) applyAgentSettings();
+    if (patch.behaviours) applyPeekSettings();
 
     sendSettings();
     refreshTrayMenu();
@@ -808,7 +828,9 @@ if (!app.requestSingleInstanceLock()) {
     // Peek mode watches for anything playing video and moves the cat aside.
     // Started in boot() below, not here: setPeek needs a window to move, and a
     // video already playing at launch would otherwise be reported once, dropped
-    // for want of a pet window, and never mentioned again.
+    // for want of a pet window, and never mentioned again. What each platform
+    // actually watches, and why none of them watch the same thing, is in
+    // watching.js.
     watcher = new WatchDetector((active) => setPeek(active));
 
     wireIpc();
@@ -817,7 +839,7 @@ if (!app.requestSingleInstanceLock()) {
     // created the instant the app reports ready; a frame's grace fixes it.
     const boot = () => {
       createPet();
-      watcher.start();
+      applyPeekSettings();
       buildTray();
       wireInput();
       // Re-assert on every start: the entry points at a path, and a checkout

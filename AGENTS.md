@@ -35,7 +35,7 @@ src/
     agent-sessions.js   AI agent transcript readers (exact signal)
     agents.js           AI agent process/CPU watcher (fallback signal)
     win-proc.js         Windows process snapshots over one long-lived PowerShell
-    watching.js         peek mode: is a video playing? (Linux, D-Bus inhibitions)
+    watching.js         peek mode: is a video playing? (three signals, one shape)
     reminders.js        stretch / water / messages / pomodoro
     store.js            atomic JSON settings
     kwin-rule.js        KDE taskbar rule
@@ -52,7 +52,10 @@ tools/
   wheel-sim.js          Windows/macOS scroll notching
   ps-sim.js             Apple `ps` output through the real parser
   win-proc-sim.js       WMI snapshots through the real parser and watcher
+  pmset-sim.js          macOS power assertions through the real parser
+  smtc-sim.js           Windows media sessions, and the pipe they arrive down
   agent-probe.js        live: what the cat can actually see, once a second
+  watch-probe.js        live: why peek mode is or isn't firing
   scroll-probe.js       live: why a real touchpad isn't producing scroll
   cursor-probe.js       live: what the cursor sources report
 .github/workflows/
@@ -583,13 +586,20 @@ once the pointer leaves the window. A watchdog clears a stuck drag flag regardle
 
 ## Peek mode: inferring "a video is playing"
 
-There is no API for it, and asking the window manager which window is fullscreen is both
-compositor-specific and useless anyway — a maximised video and a fullscreen one look the
-same to the person watching.
+There is no API for it on any platform, and asking the window manager which window is
+fullscreen is both compositor-specific and useless anyway — a maximised video and a
+fullscreen one look the same to the person watching.
 
-The signal that actually tracks playback is **power-management inhibition**. Anything
-playing video tells the session "do not blank the screen", and browsers, mpv and VLC all
-do it.
+So each platform is asked the nearest question it *can* answer. They are three different
+questions with three different answers, and the one thing they have in common is the shape
+of the answer: **a list of owners, never a boolean**. Every one of these signals has a
+boolean form, and every boolean form is true for reasons that have nothing to do with
+video. `NOT_MEDIA`, `NOT_MEDIA_DARWIN` and `NOT_MEDIA_WIN32` are the same idea three times.
+
+### Linux — power-management inhibition, over D-Bus
+
+Anything playing video tells the session "do not blank the screen", and browsers, mpv and
+VLC all do it.
 
 `org.freedesktop.PowerManagement.Inhibit.HasInhibit` answers "is anything inhibiting", and
 on a real desktop that is permanently yes for reasons unrelated to video — measured on this
@@ -599,33 +609,87 @@ Trusting the boolean would park the cat off-screen forever. So where the session
 out by app id. KDE exposes exactly that through the PolicyAgent; the boolean remains as a
 last resort.
 
-It polls at 0.2Hz because talking D-Bus from Node means a native module or the wire protocol
-by hand, and this app has two runtime dependencies and should keep them — so it forks a
-subprocess, and five seconds is quicker than anyone notices a cat moving.
+### macOS — power assertions, from `pmset -g assertions`
 
-### Why it's Linux-only, and what porting it costs
+The same idea with a better interface, and the port was as cheap as this file used to
+predict: one more entry in `PROBES`, no new dependency, no change to `WatchDetector`.
+`pmset` needs no privilege and no TCC grant, names the owning process, and — unlike KDE —
+an idle Mac holds no display-sleep assertion at all, so the signal starts clean.
 
-`watching.js` hard-gates on `process.platform === "linux"`, so on macOS and Windows the
-detector is constructed and `start()` returns immediately. **That is unwritten code, not a
-platform impossibility** — the two ports are very different sizes:
+Two things about the output decide whether it works, and neither is about the idea:
 
-- **macOS is nearly free.** `pmset -g assertions` prints a *"Listed by owning process"*
-  section — pid, process name, and which assertion it holds
-  (`PreventUserIdleDisplaySleep`). That is a direct analogue of the KDE PolicyAgent list
-  **including the owner**, which is the part that makes this workable at all: without it
-  you are back to the coarse boolean that reads true forever. It is a plain CLI, so it
-  drops into the existing `PROBES` array as one more entry with a new `parse` — no new
-  dependency, no change to `WatchDetector`. The `NOT_MEDIA` filter would need a macOS
-  equivalent (`powerd`, `coreaudiod` and friends hold standing assertions).
-- **Windows is the hard one.** The equivalent is `SetThreadExecutionState` with
-  `ES_DISPLAY_REQUIRED`, and the way to enumerate holders is `powercfg /requests` — which
-  **requires elevation**. A tray app that cannot ask for admin has no clean unelevated way
-  to see another process's execution-state requests. Don't accept a design here that
-  silently degrades to the coarse boolean; that is the failure mode the whole KDE probe
-  chain exists to avoid.
+- **Only the DISPLAY assertions count.** `PreventUserIdleSystemSleep` is what a download or
+  a backup takes and what `coreaudiod` takes for every audio context on the machine.
+  `PreventUserIdleDisplaySleep` (and its legacy spelling `NoDisplaySleepAssertion`) is what
+  a video player takes.
+- **The type must be read by position, not by search.** Almost every assertion is named
+  after itself in lowercase, so a system-sleep assertion routinely prints the string
+  `preventuseridledisplaysleep` inside its own name. A line-wide match reads a notification
+  chime as a film. `PMSET_ENTRY` takes the word after the assertion id and the elapsed
+  time, and nothing else.
 
-If you port either one, the platform check is the only gate — `setPeek`, `peekTarget` and
-the position-restore path in `index.js` are already platform-agnostic.
+`coreaudiod` is in the filter list because it takes a *display* assertion for audio going
+out over HDMI or DisplayPort — it is this list's `plasmashell`. Nothing is lost: a video
+player holds an assertion of its own alongside it.
+
+### Windows — the media session list, and why not the obvious thing
+
+The direct analogue is `SetThreadExecutionState(ES_DISPLAY_REQUIRED)`, and the only way to
+enumerate who holds one is `powercfg /requests` — a wrapper over
+`NtPowerInformation(GetPowerRequestList)`, which **requires administrator rights**. A tray
+app cannot ask for elevation, so that route is closed outright, and unlike Linux there is
+no coarse boolean to fall back to either.
+
+What *is* readable unelevated is the System Media Transport Controls session list —
+`Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager`, the thing behind
+the media flyout on the volume popup. It reports every app that registered playback, its
+play state, and which app it belongs to: the same owner-list shape as the other two. The
+`globalMediaControl` capability in Microsoft's docs is a *packaged-app* declaration; the
+API is refused only to non-interactive sessions (a service, or SYSTEM), which the cat never
+is.
+
+**Do not filter on `PlaybackType`.** A session declares Music, Video or Image, which looks
+exactly like the discriminator this feature wants, and it is a trap. Both browser engines
+hardcode Music: Chromium's SMTC bridge calls `put_Type(MediaPlaybackType_Music)` once in
+`Initialize()` and then writes `MusicProperties`, and Firefox's `WindowsSMTCProvider` does
+the same. A YouTube video in Chrome, Edge or Firefox announces itself to Windows as music.
+Filtering on `Video` would leave peek mode dead in the browser, which is where nearly all
+watching happens — so the type is ignored and the owner is filtered instead.
+
+Two consequences of the trade, both in the README: it only sees apps that register with the
+media controls, and it needs Windows 10 1809.
+
+### The costs, and the one resident process
+
+Talking D-Bus or WinRT from Node means a native module or the wire protocol by hand, and
+this app has two runtime dependencies and should keep them. So all three fork, and all
+three poll at 0.2Hz — five seconds is quicker than anyone notices a cat moving.
+
+`gdbus` and `pmset` are small programs and forking one every five seconds is fine.
+**PowerShell is not.** Starting it costs several times more than the query does, so Windows
+starts one and keeps it, printing a line per poll down a pipe — the same bargain, and the
+same reasoning, as `win-proc.js`. That resident process is also why `applyPeekSettings()`
+in `index.js` stops the detector when the behaviour is switched off rather than leaving it
+running and ignoring the answer.
+
+### A dead Windows helper must retract, not go quiet
+
+Everywhere else, "nothing could answer" leaves the cat exactly where it is — an unknown
+answer is not a reason to move a cat. Windows is the exception: the source is a resident
+process, and if it dies one poll after saying *a video is playing*, silence means the cat
+stays parked past the screen edge until the app is restarted. So `SmtcSource` reports the
+loss and the detector publishes `false`. It does that **only if the helper ever worked** —
+on a machine where the API was never reachable, nothing was ever claimed and there is
+nothing to take back.
+
+### Testing it
+
+`setPeek`, `peekTarget` and the position-restore path in `index.js` are platform-agnostic
+and were never the hard part. The parsers are, and neither of the new ones can be run here,
+so both are driven by captured output: `node tools/pmset-sim.js` and
+`node tools/smtc-sim.js`. `tools/watch-probe.js` is the live counterpart — it prints the raw
+answer your machine gives next to the verdict, which is the only way to tell "the filter is
+wrong" apart from "the player produces no signal at all".
 
 ---
 
@@ -711,7 +775,10 @@ Tick them off after any change to the areas involved.
 - [ ] With the cat at the right edge, the whole bubble is readable
 - [ ] Turn off "AI agent reactions" — no dots, no hops
 
-### Peek mode (Linux)
+### Peek mode
+
+Every platform now has a signal, and each one is a different signal — run this
+list on each, and run `node tools/watch-probe.js` first if any of it surprises you.
 
 - [ ] Play a video — after ~5s the cat slides to the nearest edge, only a sliver showing
 - [ ] While peeking: no yarn, and an agent finishing does NOT make it hop
@@ -719,6 +786,12 @@ Tick them off after any change to the areas involved.
 - [ ] Stop the video — it walks back to exactly where it was
 - [ ] Its saved X/Y never changes to the hiding spot
 - [ ] Turn "Peek while watching" off — it stays put
+- [ ] Turn it off *while it is hiding* — it comes back immediately
+- [ ] Play music instead of a video — Spotify and friends must NOT hide it
+- [ ] macOS: `pmset -g assertions` names your player under "Listed by owning process"
+- [ ] Windows: your player appears in the media flyout on the volume popup —
+      if it isn't there, the cat cannot see it either
+- [ ] Windows: no console window flashes, and no `powershell.exe` survives quitting
 
 ### Reminders and Pomodoro
 
