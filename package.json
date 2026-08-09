@@ -1,6 +1,6 @@
 {
   "name": "pixelcat",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A pixel cat that lives on your desktop",
   "main": "src/main/index.js",
   "homepage": "https://github.com/Lakshay1509/pixelcat",
