@@ -47,14 +47,31 @@ npm start          # run it
 npm run dev        # run it with the settings window open
 npm run preview    # render a contact sheet of every palette x pattern
 npm run icons      # regenerate the app + tray icons from the sprite
-npm run desktop    # install a desktop entry, so Linux taskbars show the cat
+npm run desktop    # Linux desktop integration (see below)
 npm run build      # package installers into dist/
 ```
 
-`npm run desktop` matters only when running from a checkout: Linux task managers
-take a window's icon from the desktop entry it matches, never from the window
-itself, so without one the cat shows up in the taskbar as a generic X. Packaged
-builds carry their own entry and need nothing.
+### Linux: `npm run desktop`
+
+Two things a Linux desktop has to be told, neither of which the app can say for
+itself. Undo both with `npm run desktop -- --remove`.
+
+**A desktop entry**, so the taskbar knows what the window is. A window carries an
+icon and every Linux task manager ignores it, using instead the icon of the
+desktop entry it matches the window's `WM_CLASS` against. From a checkout there
+is nothing to match, so the cat advertises itself as the X.Org logo. Packaged
+builds ship their own entry and need none of this.
+
+**A KWin rule**, so the taskbar stops listing it at all. Pixelcat is a tray app —
+a cat on the desktop, an icon in the tray — and has no business holding a taskbar
+slot too. Electron can't arrange that: `skipTaskbar` was marked unsupported on
+Linux in Electron 19 and removed in 20, because X11's
+`_NET_WM_STATE_SKIP_TASKBAR` has no Wayland equivalent. So the window manager is
+asked directly. KDE only, and skipped on other desktops — elsewhere, both windows
+will sit in the taskbar.
+
+(Declaring the window a toolbar type also works and is a trap: KWin takes the
+decorations with it, leaving the settings pane no close button.)
 
 ---
 
@@ -446,7 +463,7 @@ tools/
   preview.mjs      palette x pattern contact sheet
   make-icons.mjs   app + tray icons, generated from the sprite itself
   cursor-sim.js    the three Linux session regimes, simulated
-  install-desktop-entry.mjs   desktop entry, for running from a checkout
+  install-desktop-integration.mjs  desktop entry + KWin rule (Linux, from source)
 .github/workflows/
   release.yml      one build job per OS — see the file for why it must be
 ```
@@ -481,3 +498,8 @@ instead of drawing a subtly lopsided cat.
   saves a preference that has no effect.
 - The Windows and macOS builds have never been launched by anyone. CI proves
   they package; it cannot prove they run.
+- On Linux the app cannot keep itself out of the taskbar — `skipTaskbar` was
+  removed from Electron on Linux in v20. `npm run desktop` installs a KWin rule
+  that does it on KDE; on other desktops both windows will show a taskbar entry.
+  macOS and Windows need none of this: the dock icon is already suppressed with
+  `LSUIElement`, and `skipTaskbar` works on Windows.

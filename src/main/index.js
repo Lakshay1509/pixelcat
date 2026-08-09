@@ -425,6 +425,16 @@ function openSettings() {
       nodeIntegration: false,
     },
   });
+  /*
+   * Windows drops skipTaskbar when an existing window is show()n again
+   * (electron#3869), and openSettings() does exactly that every time the tray
+   * is clicked while this window is sitting minimised. Re-asserting costs
+   * nothing, and on Linux it is the same no-op the option already is.
+   */
+  settingsWin.on("show", () => {
+    if (settingsWin && !settingsWin.isDestroyed()) settingsWin.setSkipTaskbar(true);
+  });
+
   settingsWin.loadFile(path.join(__dirname, "../renderer/settings/index.html"));
   settingsWin.webContents.on("did-finish-load", () => {
     sendSettings();
