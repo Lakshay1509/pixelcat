@@ -468,8 +468,7 @@ Two rules keep it safe:
   cannot add a pixel, so no pattern can deform the silhouette or leak past the outline.
 - **Outlines are generated, not drawn.** The renderer dilates the alpha mask by 1px.
   Hand-authored outlines would need redrawing for every pose; generated ones are
-  consistent for free. (Comnyang's own site does the same thing in SVG with
-  `feMorphology`.)
+  consistent for free. 
 
 Eyes are drawn procedurally on top rather than baked in, because eye-follow needs
 per-frame control of the pupil — and once eyes are procedural, blink, half-lid and
@@ -603,6 +602,30 @@ last resort.
 It polls at 0.2Hz because talking D-Bus from Node means a native module or the wire protocol
 by hand, and this app has two runtime dependencies and should keep them — so it forks a
 subprocess, and five seconds is quicker than anyone notices a cat moving.
+
+### Why it's Linux-only, and what porting it costs
+
+`watching.js` hard-gates on `process.platform === "linux"`, so on macOS and Windows the
+detector is constructed and `start()` returns immediately. **That is unwritten code, not a
+platform impossibility** — the two ports are very different sizes:
+
+- **macOS is nearly free.** `pmset -g assertions` prints a *"Listed by owning process"*
+  section — pid, process name, and which assertion it holds
+  (`PreventUserIdleDisplaySleep`). That is a direct analogue of the KDE PolicyAgent list
+  **including the owner**, which is the part that makes this workable at all: without it
+  you are back to the coarse boolean that reads true forever. It is a plain CLI, so it
+  drops into the existing `PROBES` array as one more entry with a new `parse` — no new
+  dependency, no change to `WatchDetector`. The `NOT_MEDIA` filter would need a macOS
+  equivalent (`powerd`, `coreaudiod` and friends hold standing assertions).
+- **Windows is the hard one.** The equivalent is `SetThreadExecutionState` with
+  `ES_DISPLAY_REQUIRED`, and the way to enumerate holders is `powercfg /requests` — which
+  **requires elevation**. A tray app that cannot ask for admin has no clean unelevated way
+  to see another process's execution-state requests. Don't accept a design here that
+  silently degrades to the coarse boolean; that is the failure mode the whole KDE probe
+  chain exists to avoid.
+
+If you port either one, the platform check is the only gate — `setPeek`, `peekTarget` and
+the position-restore path in `index.js` are already platform-agnostic.
 
 ---
 

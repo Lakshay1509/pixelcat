@@ -79,7 +79,7 @@ download; this is what unsigned looks like.
 | Cursor tracking | ✅ | ✅ | ✅ | ✅ *(needs `input` group)* |
 | Typing & scroll reactions | ✅ *(needs Accessibility)* | ✅ | ✅ | ✅ *(needs `input` group)* |
 | AI agent reactions | ✅ | ✅ | ✅ | ✅ |
-| Peek while watching video | — | — | ✅ | ✅ |
+| Peek while watching video | not yet | not yet | ✅ | ✅ |
 | Kept out of the taskbar | ✅ | ✅ | KDE only | KDE only |
 
 **Linux/Wayland** — one command, then log out and back in:
@@ -186,8 +186,10 @@ invariants that must not be broken, and the measurements behind each decision.
   unaffected.
 - Agent detection on Windows sees Windows processes only — an agent running **inside
   WSL** is invisible to it.
-- Peek mode is Linux only. It infers playback from power-management inhibitions,
-  and there's no equivalent wired up for macOS or Windows yet.
+- Peek mode is Linux only *so far*. It infers playback from power-management
+  inhibitions; macOS exposes the same thing through `pmset -g assertions` and it
+  simply hasn't been wired up yet. Windows is the harder one — enumerating who
+  holds a display-sleep request needs elevation.
 - There is no drag. The cat is placed by coordinates and snap buttons, on purpose —
   dragging could never reach the screen edges.
 
