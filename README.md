@@ -190,6 +190,33 @@ deliberately sees as little as possible — key events are reduced to "a key wen
 down" and **the key code is discarded immediately**. Nothing is buffered,
 logged, or written to disk. The cat only needs to know *that* you're typing.
 
+#### macOS asks for permission and then has to notice it was given
+
+libuiohook calls `AXIsProcessTrustedWithOptions` with the prompt flag set, so
+starting the hook is what puts macOS's "Pixelcat would like to control this
+computer" dialog on screen. Without the grant, `uIOhook.start()` throws
+`UIOHOOK_ERROR_AXAPI_DISABLED`.
+
+That was caught, written into the status as "denied", and that was the end of
+it — a dead end the app could enter and never leave. The user went to System
+Settings, granted the permission the app had *just asked them for*, came back,
+and nothing had changed. Nothing would change until they quit and relaunched,
+and nothing told them to.
+
+macOS applies an Accessibility grant to a process that is already running, so
+there was never anything to relaunch for. `input.js` now polls
+`systemPreferences.isTrustedAccessibilityClient(false)` every 2s after a denial
+and starts the hook the moment the grant lands. The `false` matters: it means
+*check, don't ask*. libuiohook has already shown the dialog, macOS shows it once
+per launch, and prompting on a two-second timer would either do nothing or stack
+dialogs forever.
+
+Two smaller things fell out of it. Only `UIOHOOK_ERROR_AXAPI_DISABLED` is
+reported as "denied" now — a run loop that could not be acquired is a different
+problem, and sending someone to grant a permission they already granted is worse
+than saying nothing. And the settings button, which was Linux-only, appears on
+macOS too and opens the Accessibility pane directly.
+
 ### Touchpad scroll has to be reconstructed, not received
 
 Scrolling with a wheel is a hardware event: the mouse emits `REL_WHEEL` and
@@ -383,7 +410,41 @@ Details that decide whether this feels alive or broken:
   1Hz poll, so its `%CPU` estimate is read alongside.)
 
 On Linux it reads `/proc` directly — no process spawn, so polling at 1Hz doesn't
-become the CPU load it's trying to measure. On macOS it deltas `ps` CPU time.
+become the CPU load it's trying to measure.
+
+On macOS it deltas `ps` CPU time, and three details of BSD `ps` decide whether
+that works at all:
+
+- **`ps -o pid=,ppid=,time=` prints one column or three, depending.** In BSD,
+  an `=` takes the *whole rest of the argument* as that column's header — so this
+  would be asking for a single PID column headed `,ppid=,time=,args=`. Apple's
+  `ps` disables that (`#ifndef __APPLE__` in `keyword.c`) and splits on commas
+  like everyone else, so the format is fine. It is one `#ifdef` away from having
+  silently asked for nothing.
+- **TIME is `MMM:SS.hh`, not `hh:mm:ss`.** The minutes are *total* minutes and
+  never carry into an hours field, so `120:00.00` is two hours. Read left to
+  right it is five days.
+- **TIME carries hundredths**, and this used to claim it didn't. The old comment
+  said macOS resolved CPU "only to the second, too coarse for a 1Hz poll", and
+  reached for `%cpu` to compensate — but Apple's `cputime()` formats
+  `"%3ld:%02ld.%02ld"`, so the resolution is a centisecond, exactly a Linux
+  jiffy. Worse, the fallback it justified was actively harmful: BSD `%cpu` is a
+  **decaying average** over roughly the last minute, summed here across the whole
+  process tree, so a turn that had just finished went on reading as busy until it
+  decayed. For the agents with no transcript — aider, goose, amp, opencode —
+  "finished!" arrived tens of seconds late or never. It is gone; a cumulative
+  counter stops moving the moment the work does.
+
+`ps` is also invoked with `-ww` and with `$COLUMNS` stripped from its
+environment. Apple's `ps` already goes to unlimited width when stdout is not a
+terminal, which it never is here, but that decision sits downstream of a
+`$COLUMNS` lookup and this process inherits whatever shell launched it. A width
+inherited from someone's 80-column terminal would cut the tail off
+`node …/node_modules/@anthropic-ai/claude-code/cli.js` — the only part of that
+line that identifies an agent.
+
+`node tools/ps-sim.js` runs real `ps` output, in Apple's exact column layout,
+through the real parser and matcher.
 
 **Windows has neither.** The old code asked it for `ps` anyway, got `ENOENT`, and
 swallowed it once a second forever — which is why agent detection did nothing at
@@ -571,14 +632,19 @@ instead of drawing a subtly lopsided cat.
 
 - Global typing detection does not work in native Wayland apps (see table
   above). Cursor reactions are unaffected.
-- macOS needs Accessibility permission granted manually for typing reactions.
+- macOS needs Accessibility permission granted manually for typing and scroll
+  reactions. The app prompts for it, opens the pane for you from settings, and
+  picks the grant up within a couple of seconds — no relaunch.
 - Unsigned builds: macOS and Windows will warn on first launch until the
   binaries are code-signed. See [Download](#the-builds-are-not-code-signed).
 - Peek mode is Linux only. It works out that something is playing by asking the
   desktop who holds a "don't blank the screen" lock, and there is no equivalent
   wired up for macOS or Windows yet.
 - The macOS build has never been launched by anyone. CI proves it packages; it
-  cannot prove it runs.
+  cannot prove it runs. Its two known-wrong things — the `%cpu` fallback built
+  on a false claim about `ps`, and an Accessibility denial the app could not
+  recover from — were found by reading Apple's `ps` and libuiohook's sources and
+  are covered by `ps-sim.js`, but **nobody has confirmed them on real macOS**.
 - Windows has now been run, and the two things it reported — the yarn ball not
   answering a touchpad, and agent detection doing nothing at all — are fixed.
   Both fixes were derived from Microsoft's documentation and from libuiohook's

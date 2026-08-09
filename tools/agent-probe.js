@@ -38,7 +38,7 @@ setInterval(async () => {
     .filter((s) => now - s.at < 300000)
     .map((s) => `${s.agent}:${s.state}(${Math.round((now - s.at) / 1000)}s)`);
 
-  const trees = scan.procs.map((p) => `${p.name}#${p.pid}=${p.cpu}${p.pct ? `/${p.pct}%` : ""}`);
+  const trees = scan.procs.map((p) => `${p.name}#${p.pid}=${p.cpu}`);
   const procs = !scan.live
     ? `unavailable (${w.win ? w.win.state().detail : "no source"})`
     : trees.join(" ") || "-";

@@ -45,7 +45,6 @@
  * for Claude Code, whose transcript was sitting there being right the whole time.
  */
 const fs = require("fs");
-const path = require("path");
 const { execFile } = require("child_process");
 const { SessionWatcher } = require("./agent-sessions");
 const { WinProcSource } = require("./win-proc");
@@ -78,9 +77,72 @@ const POLL_MS = 1000;
 // accumulated CPU by a one-second bar would call an idle machine busy.
 const BUSY_CS_PER_SEC = 6;
 
-// macOS `ps` reports cumulative CPU only to the second, which cannot resolve a
-// 6-jiffy delta at a 1Hz poll, so its recent-usage percentage is read too.
-const PS_BUSY_PCT = 8;
+/*
+ * `ps` prints CPU time as `MMM:SS.hh`, and those hundredths are the whole reason
+ * this needs nothing else. Apple's cputime() formats it "%3ld:%02ld.%02ld", so
+ * one centisecond is the resolution — the same as a Linux jiffy. Minutes are
+ * TOTAL minutes and are not carried into an hours field, which is why the
+ * fields are read from the right; other Unixes do add hours and days.
+ *
+ * This used to also read `%cpu`, on the stated grounds that macOS resolved CPU
+ * "only to the second" and could not settle a 6-jiffy delta at 1Hz. That was
+ * simply untrue, and the fallback it justified actively hurt: BSD `%cpu` is a
+ * DECAYING AVERAGE over roughly the last minute, and it was summed across the
+ * whole process tree. So for the agents that have no transcript to read — aider,
+ * goose, amp, opencode — a turn that had just finished went on looking busy for
+ * as long as the average took to decay, and "finished!" arrived tens of seconds
+ * late or not at all. A cumulative counter cannot do that: it stops moving the
+ * moment the work stops.
+ */
+function psTime(text) {
+  const raw = String(text).split(/[:-]/);
+  // Every component checked as a string first. `Number("")` is 0, so a field
+  // that is missing or is a `-` or a `?` would otherwise parse cleanly into "no
+  // CPU at all" — and a process that reads as burning nothing does not look
+  // broken, it looks idle, which is a failure that never gets reported.
+  if (!raw.length || raw.some((p) => !/^\d+(\.\d+)?$/.test(p))) return null;
+  const [s = 0, m = 0, h = 0, d = 0] = raw.map(Number).reverse();
+  return s + m * 60 + h * 3600 + d * 86400;
+}
+
+/*
+ * `ps` output into rows. Exported so tools/ps-sim.js can run real macOS output
+ * through it from a machine that is not a Mac — every field here is a thing
+ * that differs between `ps` implementations and would fail silently if wrong.
+ */
+function parsePs(stdout) {
+  const rows = [];
+  for (const line of String(stdout).split("\n")) {
+    // pid, ppid, TIME, then everything else is the command. TIME's own leading
+    // padding is absorbed by the separator before it.
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+    if (!m) continue;
+    const secs = psTime(m[3]);
+    if (secs === null) continue;
+    rows.push({
+      pid: Number(m[1]),
+      ppid: Number(m[2]),
+      // Centiseconds, so /proc, `ps` and Win32_Process are all one unit by the
+      // time anything compares them.
+      cpu: Math.round(secs * 100),
+      argv: m[4],
+    });
+  }
+  return rows;
+}
+
+/*
+ * `ps` consults $COLUMNS before it considers whether it is talking to a
+ * terminal, and this process inherits whatever shell launched it. A width
+ * inherited from someone's 80-column terminal would truncate the command and
+ * cut the tail off `node …/node_modules/@anthropic-ai/claude-code/cli.js` —
+ * which is the only part of that line identifying an agent.
+ */
+function psEnv() {
+  const env = { ...process.env };
+  delete env.COLUMNS;
+  return env;
+}
 
 /*
  * Idle thresholds. The exact pair applies when a transcript confirmed the turn
@@ -357,7 +419,7 @@ class AgentWatcher {
       const before = this.prev.get(p.pid);
       this.prev.set(p.pid, p.cpu);
       if (before === undefined) continue; // first sighting has no delta yet
-      if (p.cpu - before >= need || p.pct >= PS_BUSY_PCT) out.push(p);
+      if (p.cpu - before >= need) out.push(p);
     }
     for (const pid of this.prev.keys()) if (!seen.has(pid)) this.prev.delete(pid);
     return out;
@@ -406,7 +468,7 @@ class AgentWatcher {
     for (const [pid, s] of stats) {
       const hit = this.matches(s.comm) || this.matchArgs(pid, s.comm);
       if (!hit) continue;
-      out.push({ pid, name: hit, cpu: s.own + s.reaped + this.treeCpu(pid, kids, stats), pct: 0 });
+      out.push({ pid, name: hit, cpu: s.own + s.reaped + this.treeCpu(pid, kids, stats) });
     }
     return out;
   }
@@ -446,41 +508,47 @@ class AgentWatcher {
   }
 
   /*
-   * Windows: whatever win-proc.js last got out of Win32_Process.
+   * Rows -> the matched process trees. Shared by `ps` and by Win32_Process,
+   * which differ only in how they spell a process and not in what one is.
    *
-   * The shape is deliberately identical to scanPs()'s, down to the reaped-child
-   * column being absent — Win32_Process has no equivalent of /proc's cutime, so
-   * a test run that has already finished does not register, exactly as on macOS.
-   * The live-descendant walk below is what covers the tool call while it runs,
-   * which is the part that matters.
+   * Neither has an equivalent of /proc's cutime, so on both of them a test run
+   * that has already finished does not register; the live-descendant walk is
+   * what covers a tool call while it is actually running, which is the part that
+   * matters. Only scanProc() gets the reaped-child time as well.
+   *
+   * `name` is the image name where the platform has one (Windows: `claude.exe`)
+   * and empty where it does not (`ps` gives a command line and nothing else).
+   * Both are consulted, because a native-installer agent and an npm one look
+   * nothing alike and only one of them is named after itself.
    */
-  scanWin() {
-    const snap = this.win && this.win.snapshot();
-    if (!snap) return { procs: [], stamp: 0, live: false };
-
+  matchRows(rows) {
     const stats = new Map();
     const kids = new Map();
-    for (const r of snap.rows) {
-      stats.set(r.pid, { ppid: r.ppid, own: r.cpu, reaped: 0, pct: 0, name: r.name, cmd: r.cmd });
+    for (const r of rows) {
+      stats.set(r.pid, { ppid: r.ppid, own: r.cpu, name: r.name || "", argv: r.argv || "" });
       if (!kids.has(r.ppid)) kids.set(r.ppid, []);
       kids.get(r.ppid).push(r.pid);
     }
 
     const out = [];
     for (const [pid, s] of stats) {
-      const argv = splitArgs(s.cmd);
-      // Win32_Process.Name is the image name with no path — `claude.exe`. The
-      // command line is consulted as well because a native-installer agent and
-      // an npm one look nothing alike, and only one of them is named after
-      // itself.
+      const argv = splitArgs(s.argv);
       const hit =
-        this.matches(s.name) ||
+        (s.name && this.matches(s.name)) ||
         this.matches(argv[0]) ||
-        (INTERPRETERS.has(baseName(s.name)) ? this.matchScript(argv[1]) : null);
+        (INTERPRETERS.has(baseName(s.name || argv[0])) ? this.matchScript(argv[1]) : null);
       if (!hit) continue;
-      out.push({ pid, name: hit, cpu: s.own + this.treeCpu(pid, kids, stats), pct: 0 });
+      out.push({ pid, name: hit, cpu: s.own + this.treeCpu(pid, kids, stats) });
     }
-    return { procs: out, stamp: snap.at, live: true };
+    return out;
+  }
+
+  // Windows: whatever win-proc.js last got out of Win32_Process.
+  scanWin() {
+    const snap = this.win && this.win.snapshot();
+    if (!snap) return { procs: [], stamp: 0, live: false };
+    const rows = snap.rows.map((r) => ({ ...r, argv: r.cmd }));
+    return { procs: this.matchRows(rows), stamp: snap.at, live: true };
   }
 
   // The script an interpreter was handed, by its own name and by the package
@@ -500,72 +568,33 @@ class AgentWatcher {
 
   /*
    * macOS and other Unixes: one `ps` gives names, parents and CPU together.
-   * TIME is cumulative like /proc's jiffies but only to the second, too coarse to
-   * resolve one poll's worth of work, so %CPU — a recent-usage estimate — is
-   * carried alongside and either can mark a tree busy.
+   * TIME is cumulative like /proc's jiffies and, on macOS, just as fine-grained
+   * — see psTime() for why that matters and what believing otherwise cost.
+   *
+   * `ps` has no equivalent of /proc's cutime, so a test run that has already
+   * finished does not register; the live-descendant walk covers it while it is
+   * actually running, which is the part that matters.
    */
   scanPs() {
     return new Promise((resolve, reject) => {
-      execFile("ps", ["-Ao", "pid=,ppid=,time=,%cpu=,args="], { timeout: 4000, maxBuffer: 4 << 20 },
+      execFile(
+        "ps",
+        /*
+         * `-w` twice is what makes the width unlimited. Apple's `ps` already
+         * goes unlimited when stdout is not a terminal — and here it never is,
+         * since execFile gives it a pipe — but that decision sits downstream of
+         * a $COLUMNS lookup, and pinning the width explicitly is one line
+         * against a whole class of "it works in my terminal" failure.
+         */
+        ["-A", "-ww", "-o", "pid=,ppid=,time=,args="],
+        { timeout: 4000, maxBuffer: 4 << 20, env: psEnv() },
         (err, stdout) => {
           if (err) return reject(err);
-          const stats = new Map();
-          const kids = new Map();
-          for (const line of String(stdout).split("\n")) {
-            const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/);
-            if (!m) continue;
-            const pid = Number(m[1]);
-            const ppid = Number(m[2]);
-            // TIME is [[dd-]hh:]mm:ss — converted to centiseconds for parity with jiffies
-            const p = m[3].split(/[:-]/).map(Number).reverse();
-            const secs =
-              (p[0] || 0) + (p[1] || 0) * 60 + (p[2] || 0) * 3600 + (p[3] || 0) * 86400;
-            stats.set(pid, {
-              ppid,
-              own: secs * 100,
-              reaped: 0, // ps does not expose reaped-child time
-              pct: Number(m[4]) || 0,
-              argv: m[5],
-            });
-            if (!kids.has(ppid)) kids.set(ppid, []);
-            kids.get(ppid).push(pid);
-          }
-
-          const out = [];
-          for (const [pid, s] of stats) {
-            const argv = splitArgs(s.argv);
-            const hit =
-              this.matches(path.basename(argv[0] || "")) ||
-              (INTERPRETERS.has(baseName(argv[0]))
-                ? this.matchScript(argv[1])
-                : null);
-            if (!hit) continue;
-            out.push({
-              pid,
-              name: hit,
-              cpu: s.own + this.treeCpu(pid, kids, stats),
-              pct: s.pct + this.treePct(pid, kids, stats),
-            });
-          }
-          resolve(out);
+          resolve(this.matchRows(parsePs(stdout)));
         }
       );
     });
   }
-
-  treePct(root, kids, stats) {
-    let total = 0;
-    const stack = (kids.get(root) || []).slice();
-    while (stack.length) {
-      const pid = stack.pop();
-      if (pid === process.pid) continue;
-      const s = stats.get(pid);
-      if (!s) continue;
-      total += s.pct || 0;
-      for (const k of kids.get(pid) || []) stack.push(k);
-    }
-    return total;
-  }
 }
 
-module.exports = { AgentWatcher, DEFAULT_AGENTS, baseName, splitArgs };
+module.exports = { AgentWatcher, DEFAULT_AGENTS, baseName, splitArgs, parsePs, psTime };

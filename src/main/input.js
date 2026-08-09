@@ -45,6 +45,19 @@
  * KEYBOARD
  * uiohook where it works; /dev/input where it doesn't.
  *
+ * On macOS "where it works" means "once someone has granted Accessibility", and
+ * that is a state this used to enter and never leave. libuiohook asks the system
+ * for the permission with the prompt flag set, so macOS puts its dialog on
+ * screen, and `uIOhook.start()` then throws UIOHOOK_ERROR_AXAPI_DISABLED. The
+ * old code caught that, wrote "denied" into the status, and stopped — so the
+ * user walked to System Settings, granted the permission the app had just asked
+ * for, came back, and nothing had changed. Nothing would change until the app
+ * was quit and relaunched, which nothing told them to do.
+ *
+ * macOS applies an Accessibility grant to a process that is already running, so
+ * there is nothing to relaunch for. `watchForAccess` waits for the grant and
+ * starts the hook when it arrives.
+ *
  * WHEEL
  * A mouse wheel notches. One click is one message carrying a delta of 120, and
  * libuiohook hands that over as a rotation of ±1, so one turn of a wheel is one
@@ -486,8 +499,51 @@ function startGlobal({ onKey, onWheel }) {
     return status;
   }
 
-  if (process.platform !== "linux") tryHook({ onKey, onWheel });
+  if (process.platform !== "linux" && !tryHook({ onKey, onWheel })) {
+    if (process.platform === "darwin") watchForAccess({ onKey, onWheel });
+  }
   return status;
+}
+
+// A person walking to System Settings, not a race. Slow enough to cost nothing,
+// fast enough that the cat is reacting by the time they look back at it.
+const ACCESS_POLL_MS = 2000;
+let accessTimer = null;
+
+/*
+ * Wait for the Accessibility grant, then start the hook that was refused.
+ *
+ * The check passes `false` — "tell me, do not ask". libuiohook already put the
+ * prompt on screen when it failed, and macOS shows that dialog once per launch;
+ * asking again on a two-second timer would either do nothing or, on the versions
+ * where it does something, stack dialogs on the user's screen forever.
+ */
+function watchForAccess(handlers) {
+  if (accessTimer) return;
+  let systemPreferences;
+  try {
+    ({ systemPreferences } = require("electron"));
+  } catch {
+    return;
+  }
+  if (!systemPreferences || typeof systemPreferences.isTrustedAccessibilityClient !== "function") {
+    return;
+  }
+  accessTimer = setInterval(() => {
+    let trusted = false;
+    try {
+      trusted = systemPreferences.isTrustedAccessibilityClient(false);
+    } catch {
+      trusted = false;
+    }
+    if (!trusted) return;
+    clearInterval(accessTimer);
+    accessTimer = null;
+    // If this fails it fails for some reason other than the permission, and
+    // status now carries that reason instead — retrying it forever would not
+    // find a different answer.
+    tryHook(handlers);
+  }, ACCESS_POLL_MS);
 }
 
 // The same 50ms evdev-linux.js notches a Linux touchpad at, for the same reason
@@ -562,19 +618,46 @@ function tryHook({ onKey, onWheel }) {
     hook = uIOhook;
     status.keyboard = "ok";
     status.source = "uiohook";
-    if (process.platform === "darwin") {
-      status.detail =
-        "If typing reactions do nothing, grant Accessibility permission in System Settings > Privacy & Security > Accessibility.";
-    }
+    /*
+     * Cleared, not written. This used to tell macOS users "if typing reactions
+     * do nothing, grant Accessibility permission" — advice that can only ever be
+     * read once the hook has started, and the hook cannot start until that
+     * permission exists. libuiohook checks it and refuses before this line. So
+     * the note was offering a fix for a problem that, by the time anyone could
+     * see it, was already solved. On a retry after a grant it would have been
+     * worse still: the one message that means "it worked" would have been a
+     * message about it not working.
+     */
+    status.detail = "";
     return true;
   } catch (err) {
-    status.keyboard = process.platform === "darwin" ? "denied" : "error";
-    status.detail = err.message;
+    /*
+     * Only the accessibility error is "denied". Every other macOS failure —
+     * a run loop that could not be acquired, an event port that could not be
+     * created — is a different problem with a different fix, and telling
+     * someone to go and grant a permission they have already granted is worse
+     * than telling them nothing. The code comes from libuiohook via
+     * napi_throw_error, so it is exact rather than a string match on the
+     * message.
+     */
+    if (err.code === "UIOHOOK_ERROR_AXAPI_DISABLED") {
+      status.keyboard = "denied";
+      status.detail =
+        "macOS has not granted Accessibility permission, so typing and scroll " +
+        "reactions are off. Open System Settings > Privacy & Security > " +
+        "Accessibility and switch Pixelcat on — the cat picks it up within a " +
+        "couple of seconds, with no need to relaunch.";
+    } else {
+      status.keyboard = "error";
+      status.detail = err.message;
+    }
     return false;
   }
 }
 
 function stopGlobal() {
+  if (accessTimer) clearInterval(accessTimer);
+  accessTimer = null;
   if (hook) {
     try {
       hook.stop();

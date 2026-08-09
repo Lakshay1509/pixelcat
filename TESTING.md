@@ -53,6 +53,27 @@ Put it at the very top, then check:
 - [ ] With the cat at the right edge, the whole bubble is readable, not cut off
 - [ ] Turn off "AI agent reactions" in settings — no dots, no hops
 
+## macOS only
+
+Same situation as Windows below: reasoned from Apple's `ps` source and
+libuiohook's, never run. Start with the permission dance, since everything else
+depends on it.
+
+- [ ] First launch — macOS asks for Accessibility permission
+- [ ] **Without quitting the app**, grant it in System Settings > Privacy &
+      Security > Accessibility. Within ~2s the cat reacts to typing and scroll.
+      **No relaunch.** This is the fix; before it, only a relaunch worked.
+- [ ] Settings shows an OPEN ACCESSIBILITY SETTINGS button while it is denied,
+      and the button opens the right pane
+- [ ] Once granted, the button disappears and the status reads "Typing: detected"
+- [ ] Trackpad two-finger scroll — the yarn ball rolls out and is batted along
+- [ ] Start Claude Code — three dots appear. Works for **both** install shapes:
+      the native installer (`~/.local/bin/claude`) and npm/Homebrew (`node …`)
+- [ ] Start aider or goose (no transcript, so CPU is the only signal) — the dots
+      appear while it works **and clear within ~8s of it finishing**, not 30s+.
+      A late clear means the decaying-average problem is back.
+- [ ] `node tools/agent-probe.js` shows a matched tree with a rising CPU number
+
 ## Windows only
 
 Both of these were reported broken and fixed without a Windows machine to check

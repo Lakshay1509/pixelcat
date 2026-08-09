@@ -191,10 +191,12 @@
       st.keyboard === "ok" || st.keyboard === "evdev" ? "note" : "note warn";
 
     // Offer the one-click fix only when it is actually the missing piece.
+    // On macOS that means the Accessibility grant specifically — the button
+    // opens the pane, and offering it for an unrelated hook failure would send
+    // someone to switch on something already switched on.
     $("grantInput").hidden = !(
-      window.pet.platform === "linux" &&
-      st.keyboard !== "ok" &&
-      st.keyboard !== "evdev"
+      (window.pet.platform === "linux" && st.keyboard !== "ok" && st.keyboard !== "evdev") ||
+      (window.pet.platform === "darwin" && st.keyboard === "denied")
     );
   }
 
@@ -342,17 +344,24 @@
       save({ agentNames: e.target.value }, "agentNames")
     );
 
+    // The two platforms need different words because they are doing different
+    // things: Linux asks for a privilege escalation and waits for it, macOS just
+    // opens the pane where a person does it by hand.
+    const mac = window.pet.platform === "darwin";
+    const grantIdle = mac ? "OPEN ACCESSIBILITY SETTINGS" : "ENABLE FULL INPUT TRACKING";
+    $("grantInput").textContent = grantIdle;
+
     $("grantInput").addEventListener("click", async () => {
       const btn = $("grantInput");
       const out = $("grantResult");
       btn.disabled = true;
-      btn.textContent = "WAITING FOR AUTHORISATION…";
+      btn.textContent = mac ? "OPENING…" : "WAITING FOR AUTHORISATION…";
       const r = await window.pet.invoke("grant-input-access");
       out.hidden = false;
       out.textContent = r.message;
       out.className = r.ok ? "note" : "note warn";
       btn.disabled = false;
-      btn.textContent = "ENABLE FULL INPUT TRACKING";
+      btn.textContent = grantIdle;
     });
 
     $("taskbarRule").addEventListener("click", async () => {

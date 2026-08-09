@@ -704,9 +704,34 @@ function wireIpc() {
   // Linux only: adding the user to the `input` group is what makes global
   // typing detection possible under Wayland. It needs privilege, so it is an
   // explicit button that raises the system's own auth prompt — never silent.
-  ipcMain.handle("grant-input-access", () => {
+  ipcMain.handle("grant-input-access", async () => {
+    /*
+     * macOS will not take this permission from a program under any
+     * circumstances — Accessibility is granted by a person, in Settings, and
+     * that is the point of it. What can be removed is the part where they have
+     * to go and find the pane. input.js is already watching for the grant, so
+     * nothing here has to report success: the cat starts reacting on its own.
+     */
+    if (process.platform === "darwin") {
+      try {
+        await shell.openExternal(
+          "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        );
+      } catch {
+        return {
+          ok: false,
+          message:
+            "Could not open System Settings. Go to Privacy & Security > Accessibility and switch Pixelcat on.",
+        };
+      }
+      return {
+        ok: true,
+        message:
+          "Switch Pixelcat on in the Accessibility list. The cat starts reacting a second or two later — no relaunch.",
+      };
+    }
     if (process.platform !== "linux") {
-      return { ok: false, message: "Only needed on Linux." };
+      return { ok: false, message: "Only needed on Linux and macOS." };
     }
     const user = os.userInfo().username;
     return new Promise((resolve) => {
