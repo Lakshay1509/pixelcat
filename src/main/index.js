@@ -401,26 +401,21 @@ function openSettings() {
      * double-clicking the cat, and so does launching the app a second time —
      * `second-instance` calls openSettings rather than starting a rival copy.
      */
-    skipTaskbar: true,
     /*
-     * ...which Electron implements on macOS and Windows ONLY. On Linux the flag
-     * is a no-op, and so is setSkipTaskbar() — measured here, not assumed: KDE
-     * left the window with no _NET_WM_STATE_SKIP_TASKBAR either way and went on
-     * showing a button.
+     * macOS and Windows ONLY. Electron marked skipTaskbar unsupported on Linux
+     * in 19 and removed it in 20: X11 has _NET_WM_STATE_SKIP_TASKBAR, Wayland
+     * has no equivalent, and the workarounds cost more than the feature does.
+     * So on Linux BOTH windows sit in the taskbar, this changes nothing, and
+     * no other option here would either — it is a window-manager setting now.
      *
-     * A Linux taskbar decides from the window TYPE instead, so this says what
-     * the window actually is. KWin keeps toolbar windows out of the task
-     * manager and out of alt-tab, which is right for a pane that belongs to a
-     * tray icon rather than to the taskbar.
-     *
-     * The cat's own window needs none of this: frameless, transparent and
-     * always-on-top already keeps it out, which is what made skipTaskbar look
-     * like it was working there.
+     * Declaring the window a toolbar TYPE does get it out of the taskbar, and
+     * is not worth the price: KWin then strips the decorations too, leaving the
+     * settings pane with no close button. Tried, measured, reverted.
      */
-    ...(process.platform === "linux" ? { type: "toolbar" } : {}),
-    // Still worth setting despite the above: it is the title bar's icon, the
-    // alt-tab icon, and on Windows the one the taskbar uses when grouping. An
-    // unpackaged run without it advertises itself as a generic Electron app.
+    skipTaskbar: true,
+    // Independently useful: the title bar's icon, alt-tab's, and the one
+    // Windows groups by. An unpackaged run without it advertises itself as a
+    // generic Electron app.
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#141418",
     autoHideMenuBar: true,
@@ -430,25 +425,6 @@ function openSettings() {
       nodeIntegration: false,
     },
   });
-  /*
-   * ...and again on the live window, because the constructor flag above is not
-   * enough on its own. KDE ignored it here and kept showing a taskbar button.
-   *
-   * The cat's own window is not evidence that the flag works: that one is
-   * frameless, transparent and always-on-top, which is what actually keeps it
-   * out of the taskbar. It only looked like skipTaskbar doing the job.
-   *
-   * Re-asserted on every show as well as now. A window that is hidden and shown
-   * again is re-mapped, and a hint applied to the previous mapping does not
-   * necessarily survive that.
-   */
-  const hideFromTaskbar = () => {
-    if (settingsWin && !settingsWin.isDestroyed()) settingsWin.setSkipTaskbar(true);
-  };
-  hideFromTaskbar();
-  settingsWin.on("show", hideFromTaskbar);
-  settingsWin.once("ready-to-show", hideFromTaskbar);
-
   settingsWin.loadFile(path.join(__dirname, "../renderer/settings/index.html"));
   settingsWin.webContents.on("did-finish-load", () => {
     sendSettings();
