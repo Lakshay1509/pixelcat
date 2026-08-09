@@ -6,13 +6,55 @@ Its colour and pattern are yours to pick.
 
 Runs on macOS, Windows and Linux.
 
+## Download
+
+Builds are on the [releases page](https://github.com/Lakshay1509/pixelcat/releases/latest),
+one per platform, each built on that platform.
+
+| Platform | Download |
+| --- | --- |
+| **Windows** | `Pixelcat.Setup.0.1.0.exe` (installer) or `Pixelcat.0.1.0.exe` (portable, no install) |
+| **macOS** | `Pixelcat-0.1.0-arm64.dmg` for Apple Silicon, `Pixelcat-0.1.0.dmg` for Intel |
+| **Linux** | `Pixelcat-0.1.0.AppImage` — `chmod +x` it and run it. Or the `.deb` if you'd rather your package manager knew about it |
+
+### The builds are not code-signed
+
+There is no Apple or Windows signing certificate behind these, so both systems
+will treat them as software from nobody in particular. Nothing is wrong with the
+download; this is what unsigned looks like.
+
+- **macOS** refuses them outright, and the wording is misleading — it usually
+  says the app is *damaged*, which sounds like a corrupt file and is not. Either
+  right-click the app and choose **Open** (which offers a way through that
+  double-clicking does not), or clear the quarantine flag:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Pixelcat.app
+  ```
+
+- **Windows** shows a SmartScreen panel. **More info** → **Run anyway**.
+
+The cat asks for no permissions and talks to no network. On macOS it will ask
+for Accessibility if you want it to react to typing — that grant is what lets
+any app see keystrokes it did not receive itself, and declining costs you only
+the typing reactions.
+
+## From source
+
 ```bash
 npm install
 npm start          # run it
 npm run dev        # run it with the settings window open
 npm run preview    # render a contact sheet of every palette x pattern
+npm run icons      # regenerate the app + tray icons from the sprite
+npm run desktop    # install a desktop entry, so Linux taskbars show the cat
 npm run build      # package installers into dist/
 ```
+
+`npm run desktop` matters only when running from a checkout: Linux task managers
+take a window's icon from the desktop entry it matches, never from the window
+itself, so without one the cat shows up in the taskbar as a generic X. Packaged
+builds carry their own entry and need nothing.
 
 ---
 
@@ -403,6 +445,10 @@ tools/
   lib.mjs          build-time rasteriser + zero-dep PNG encoder
   preview.mjs      palette x pattern contact sheet
   make-icons.mjs   app + tray icons, generated from the sprite itself
+  cursor-sim.js    the three Linux session regimes, simulated
+  install-desktop-entry.mjs   desktop entry, for running from a checkout
+.github/workflows/
+  release.yml      one build job per OS — see the file for why it must be
 ```
 
 `tools/` renders the cat in Node using the same sprite data the app uses, so the
@@ -426,4 +472,12 @@ instead of drawing a subtly lopsided cat.
   above). Cursor reactions are unaffected.
 - macOS needs Accessibility permission granted manually for typing reactions.
 - Unsigned builds: macOS and Windows will warn on first launch until the
-  binaries are code-signed.
+  binaries are code-signed. See [Download](#the-builds-are-not-code-signed).
+- Peek mode is Linux only. It works out that something is playing by asking the
+  desktop who holds a "don't blank the screen" lock, and there is no equivalent
+  wired up for macOS or Windows yet.
+- "Launch at login" does nothing on Linux. `app.setLoginItemSettings` is
+  implemented on macOS and Windows only; on Linux it does not fail, it silently
+  saves a preference that has no effect.
+- The Windows and macOS builds have never been launched by anyone. CI proves
+  they package; it cannot prove they run.

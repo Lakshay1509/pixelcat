@@ -58,10 +58,15 @@ linux:
   icon: assets/icon.png
   category: Utility
   synopsis: A pixel cat that lives on your desktop
-  # AppImage only, on purpose. A .deb has to carry a maintainer address and a
-  # homepage inside the package, where everyone who installs it can read them,
-  # and neither exists yet — an invented URL in shipped metadata is worse than
-  # no .deb. The AppImages cover both architectures and need no install step.
+  # A .deb names someone responsible for it and refuses to build without one.
+  # This goes INTO the package, where everyone who installs it can read it —
+  # change it if these are ever published by anyone else. The homepage it also
+  # demands comes from package.json.
+  maintainer: Lakshay Gupta <gupta15.lakshay@gmail.com>
   target:
+    # AppImage runs anywhere without installing; the .deb is for people who
+    # would rather their package manager knew about it.
     - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
       arch: [x64, arm64]
