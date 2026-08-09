@@ -24,10 +24,37 @@
   let catX = 0;
   let catY = 0;
 
-  const cursor = { lx: -9999, ly: -9999, speed: 0 };
+  /*
+   * TWO pointer models, because the cat asks two different questions about the
+   * pointer and they do not have the same accuracy requirement.
+   *
+   * `touch` answers "is it ON me" — hover, petting, hearts. Only ever written
+   * from a position we know exactly. An estimate a few hundred pixels out is
+   * not nearly right here, it is the cat purring at nobody.
+   *
+   * `gaze` answers "which way is it" — the eyes, and nothing else. That is a
+   * direction, and a direction survives being somewhat wrong, so it takes the
+   * estimated global position happily.
+   *
+   * These used to be one object gated by a single `exact` flag, which meant
+   * losing pixel accuracy also cost the cat its eyesight: on a Wayland session
+   * it could only follow the pointer inside its own window, and the moment the
+   * cursor stepped off, the eyes went blank. Splitting them is the fix, and it
+   * is also why fixing one half no longer breaks the other.
+   */
+  const touch = { lx: -9999, ly: -9999, speed: 0, at: -1e9 };
+  const gaze = { lx: -9999, ly: -9999, at: -1e9, conf: 0 };
+
+  // Below this the estimate is too vague to point at anything, and the cat
+  // relaxes instead of staring confidently at the wrong part of the desk.
+  const GAZE_MIN_CONF = 0.12;
+  // How long a real DOM sample outranks the global feed.
+  const LOCAL_PRIORITY_MS = 400;
+  // How long a gaze fix is worth acting on after it stops being refreshed.
+  const GAZE_STALE_MS = 2500;
+
   let particles = [];
   let lastRect = null; // cat bounds from the previous frame, for hit testing
-  let staleMode = false; // true when main has no usable global cursor
   let winY = 100; // window's screen y, for deciding which side bubbles go
 
   // drives
@@ -35,6 +62,7 @@
   let petMeter = 0; // 0..1 purring
   let sleepiness = 0; // 0..1
   let hoverAmt = 0; // 0..1 "I noticed you" perk-up
+  const eyeSmooth = { x: 0, y: 0 }; // eased pupil offset, see the gaze note below
   let wasInside = false;
   let thinking = false; // an AI agent is working
   let pomoPhase = "idle"; // "focus" while a round runs: the cat wears the band
@@ -81,39 +109,52 @@
   /*
    * Two pointer sources, and local events always win.
    *
-   * Main polls a global cursor, which is exact on Windows/macOS/X11 and either
-   * estimated or entirely blind on Wayland. But whenever the pointer is over
-   * this window we get real DOM mousemove events with exact coordinates — so
-   * those take precedence for a moment after they arrive, and the global feed
-   * fills the gaps. On a Wayland box with no /dev/input access this is the only
-   * working source, and it's why the cat still reacts when you approach it.
+   * Main sends a fused global position every tick, tagged with how much it is
+   * to be believed. Whenever the pointer is over this window we also get real
+   * DOM mousemove events, which are exact on every platform — so those take
+   * precedence for a moment after they arrive, the global feed fills the gaps,
+   * and each local sample is handed back to main to re-anchor its estimate.
+   *
+   * On a Wayland box with no /dev/input access the local events are the only
+   * source at all, and that is why the cat still reacts when you approach it.
    */
   let localAt = -1e9;
   let localPrev = null;
-  // When cursor.speed was last set by ANY source. Pointer events stop arriving
-  // the moment a hand stops moving, so without this the last speed stands
-  // forever: a hand resting on the cat's head would pet it indefinitely, and a
-  // fast flick that ended over the cat would leave it pouncing for good.
-  let speedAt = -1e9;
 
   window.pet.on("cursor", (c) => {
-    // `exact` means the display server reported a real point. A dead-reckoned
-    // one (Wayland + /dev/input) is close enough to know the mouse is MOVING and
-    // nowhere near close enough to say which pixel it is on — so it is treated
-    // like no position at all rather than trusted a few hundred px off, which
-    // made the cat stop registering a hand resting on it 400ms after the last
-    // local event and drop the pet meter mid-stroke.
-    staleMode = !c.exact;
     if (typeof c.wy === "number") winY = c.wy;
-    // Global movement still counts as being awake even when we cannot place it.
+    // Global movement counts as being awake even when we cannot place it.
     if (c.speed > 2) lastActivity = Date.now();
-    if (!c.exact) return; // position is an estimate; local events are all we trust
-    if (now() - localAt < 400) return; // a real pointer event is more accurate
-    cursor.lx = c.lx;
-    cursor.ly = c.ly;
-    cursor.speed = c.speed;
-    speedAt = now();
+    // A real pointer event is more accurate than anything main can poll, and
+    // fresher than the estimate it just corrected.
+    if (now() - localAt < LOCAL_PRIORITY_MS) return;
+
+    // `exact` means a source that knows — the display server reporting a point
+    // that genuinely changed. Only that may move the touch model.
+    if (c.exact) {
+      touch.lx = c.lx;
+      touch.ly = c.ly;
+      touch.speed = c.speed;
+      touch.at = now();
+    }
+    // The gaze takes whatever main is confident enough about, exact or not.
+    if (c.conf >= GAZE_MIN_CONF) {
+      gaze.lx = c.lx;
+      gaze.ly = c.ly;
+      gaze.conf = c.conf;
+      gaze.at = now();
+    }
   });
+
+  // Throttled: main only needs re-anchoring often enough to stop the estimate
+  // drifting, and 60 IPC messages a second to say the same thing is waste.
+  let syncAt = -1e9;
+  function syncPointer(lx, ly) {
+    const t = now();
+    if (t - syncAt < 60) return;
+    syncAt = t;
+    window.pet.send("pointer-sync", { lx, ly });
+  }
 
   window.addEventListener("mousemove", (e) => {
     const t = now();
@@ -122,29 +163,39 @@
     if (localPrev) {
       const dt = Math.max(8, t - localPrev.t);
       // normalise to per-16ms so it shares a scale with main's polled speed
-      cursor.speed = (Math.hypot(lx - localPrev.x, ly - localPrev.y) / dt) * 16;
-      speedAt = t;
+      touch.speed = (Math.hypot(lx - localPrev.x, ly - localPrev.y) / dt) * 16;
     }
     localPrev = { x: lx, y: ly, t };
-    cursor.lx = lx;
-    cursor.ly = ly;
+    touch.lx = lx;
+    touch.ly = ly;
+    touch.at = t;
+    gaze.lx = lx;
+    gaze.ly = ly;
+    gaze.conf = 1;
+    gaze.at = t;
     localAt = t;
     lastActivity = Date.now();
+    // Hand it back: this is a true position main has no other way to obtain on
+    // a Wayland session, and it arrives exactly when the estimate is about to
+    // be asked its hardest question.
+    syncPointer(lx, ly);
   });
 
-  // Without a trustworthy global cursor the last local point is all we have, and
-  // it does not expire on its own: walk the pointer off the cat and the stale
-  // coordinate is still sitting on it, so the cat stays perked up and purring at
-  // nobody. Leaving the window means "the pointer is elsewhere", so say so.
+  // The last local point does not expire on its own: walk the pointer off the
+  // cat and the stale coordinate is still sitting on it, so the cat stays
+  // perked up and purring at nobody. Leaving the window means "the pointer is
+  // elsewhere", so say so.
   document.addEventListener("mouseleave", () => {
-    cursor.lx = -9999;
-    cursor.ly = -9999;
-    cursor.speed = 0;
+    touch.lx = -9999;
+    touch.ly = -9999;
+    touch.speed = 0;
+    touch.at = -1e9;
     localPrev = null;
-    // Expire the local sample too. Parking it far off-screen without this left
-    // the gaze treating (-9999,-9999) as a real target, so the cat rolled its
-    // eyes hard to the top-left for the 1.8s the sample stayed "fresh".
     localAt = -1e9;
+    // The GAZE is deliberately not cleared. The pointer did not stop existing,
+    // it merely left the window, and main's estimate can still say where it
+    // went — the next cursor message will say so. Clearing it here is what used
+    // to make the eyes snap to neutral the instant the cursor stepped off.
   });
 
   window.pet.on("key", () => {
@@ -466,10 +517,11 @@
     const dt = Math.min(0.05, (t - last) / 1000);
     last = t;
 
-    // A pointer that has stopped reporting has stopped moving. On a platform
-    // with a real global cursor this never fires — main resends at 60Hz — so it
-    // only covers the case where local events are the only source.
-    if (t - speedAt > 90) cursor.speed = 0;
+    // A pointer that has stopped reporting has stopped moving. Without this the
+    // last speed stands forever: a hand resting on the cat's head would pet it
+    // indefinitely, and a fast flick that ended over the cat would leave it
+    // pouncing for good.
+    if (t - touch.at > 90) touch.speed = 0;
 
     // Ease into and out of hiding. The sprite is simply drawn past the end of
     // its own canvas; the clipping is what makes it look like it has slipped
@@ -497,19 +549,17 @@
     // cat centre in window coords
     const cx = catX + peekX + A.head.x * L.scale;
     const cy = catY + peekY + A.head.y * L.scale;
-    const dx = cursor.lx - cx;
-    const dy = cursor.ly - cy;
-    const dist = Math.hypot(dx, dy);
 
     // Is the pointer over the cat? Computed here from the rect we drew last
-    // frame rather than trusted from main, because main's copy is wrong on
-    // Wayland and one frame of staleness is invisible.
+    // frame rather than trusted from main, because main is not always the one
+    // hit-testing and one frame of staleness is invisible. Strictly the TOUCH
+    // model: an estimate must never be able to trip this.
     const inside =
       lastRect &&
-      cursor.lx >= lastRect.x &&
-      cursor.lx <= lastRect.x + lastRect.w &&
-      cursor.ly >= lastRect.y &&
-      cursor.ly <= lastRect.y + lastRect.h;
+      touch.lx >= lastRect.x &&
+      touch.lx <= lastRect.x + lastRect.w &&
+      touch.ly >= lastRect.y &&
+      touch.ly <= lastRect.y + lastRect.h;
 
     // Hover: simply being noticed is its own reaction. Without this the cat
     // ignores you until you wiggle the mouse on exactly the right pixels,
@@ -525,8 +575,8 @@
     // Petting: anywhere on the upper half counts as the head, and the movement
     // threshold is low — a slow deliberate stroke should register, and it did
     // not when the bar was set at a brisk flick.
-    const overHead = inside && cursor.ly < catY + peekY + 18 * L.scale;
-    if (S.behaviours.petting && overHead && cursor.speed > 0.5) {
+    const overHead = inside && touch.ly < catY + peekY + 18 * L.scale;
+    if (S.behaviours.petting && overHead && touch.speed > 0.5) {
       petMeter = clamp(petMeter + dt * 1.8, 0, 1);
       lastActivity = Date.now();
     } else {
@@ -574,16 +624,31 @@
     if (hoverAmt > 0.4 && t >= blinkUntil && !purring) lids = 0;
 
     // --- pose ---
-    // eye follow: normalise direction, keep pupils inside the sclera.
-    // When local events are the only source, the last known position goes
-    // stale the moment the pointer leaves the window — so let the gaze relax
-    // to neutral instead of staring at a spot the cursor left long ago.
-    const pointerFresh = !staleMode || t - localAt < 1800;
-    let eye = { x: 0, y: 0 };
-    if (S.behaviours.eyeFollow && pointerFresh && dist > 4 && lids < 1) {
-      const n = Math.max(1, dist);
-      eye = { x: clamp((dx / n) * 1.6, -1, 1), y: clamp((dy / n) * 1.6, -1, 1) };
+    // Eye follow: normalise direction, keep pupils inside the sclera. This runs
+    // off the GAZE model, so it works anywhere on the desktop the estimate can
+    // reach — not only inside this window. A fix that has stopped being
+    // refreshed does expire, so the cat relaxes rather than staring at a spot
+    // the cursor left long ago.
+    const gdx = gaze.lx - cx;
+    const gdy = gaze.ly - cy;
+    const gdist = Math.hypot(gdx, gdy);
+    let eyeWant = { x: 0, y: 0 };
+    if (S.behaviours.eyeFollow && t - gaze.at < GAZE_STALE_MS && gdist > 4 && lids < 1) {
+      const n = Math.max(1, gdist);
+      eyeWant = { x: clamp((gdx / n) * 1.6, -1, 1), y: clamp((gdy / n) * 1.6, -1, 1) };
     }
+    /*
+     * Ease the pupils rather than snapping them. The estimate corrects itself in
+     * jumps — every time an exact fix lands, a whole excursion's worth of drift
+     * is undone at once — and applied raw that reads as the cat's eyes ticking
+     * like a clock. At ~50ms this is far too quick to feel like lag when the
+     * position is exact, and just slow enough to turn a correction into a
+     * glance.
+     */
+    const ease = Math.min(1, dt * 20);
+    eyeSmooth.x += (eyeWant.x - eyeSmooth.x) * ease;
+    eyeSmooth.y += (eyeWant.y - eyeSmooth.y) * ease;
+    const eye = { x: eyeSmooth.x, y: eyeSmooth.y };
 
     let squashX = 1;
     let squashY = 1;

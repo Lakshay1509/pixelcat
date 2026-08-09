@@ -492,34 +492,37 @@ function wireInput() {
     onWheel: (e) => send("wheel", { rotation: e.rotation || 0 }),
   });
 
-  input.startCursor((p, dx, dy) => {
+  input.startCursor((s) => {
     if (!petWin || petWin.isDestroyed() || !petWin.isVisible()) return;
 
     const [wx, wy] = petWin.getPosition();
-    const lx = p.x - wx;
-    const ly = p.y - wy;
+    const lx = s.x - wx;
+    const ly = s.y - wy;
 
     // Smooth the speed a little; raw per-frame deltas are far too jumpy to
     // drive a "the cursor is moving fast, go hunt it" threshold.
-    const raw = Math.hypot(dx, dy);
+    const raw = Math.hypot(s.dx, s.dy);
     lastSpeed = lastSpeed * 0.8 + raw * 0.2;
 
-    // Only a pointer the display server reports can gate click-through.
-    //
-    // `evdev` is DEAD RECKONING — an estimate, not a position. It has to absorb
-    // pointer acceleration we cannot observe, and it is seeded from the frozen
-    // native point, so it is wrong from the first sample and only drifts further
-    // (measured on this KDE Wayland session: ~400px off in both axes). Hit-testing
-    // the cat against it means the test essentially never passes, the window stays
-    // click-through forever, and the cat cannot be petted, dragged, right-clicked
-    // or double-clicked at all — every click falls through to whatever is behind.
-    //
-    // So an estimate is treated exactly like no cursor at all: keep the window
-    // interactive and let the renderer drive interaction from its own DOM pointer
-    // events, which are exact whenever the pointer is over the window. Trade-off
-    // is the documented one — the window's rect, not just the cat, absorbs clicks.
-    const exact = input.status.cursor === "native";
-    if (!exact) {
+    /*
+     * Click-through is gated on `hitTest`, which is a settled verdict about the
+     * SESSION, not on `exact`, which is a fact about this one sample. They are
+     * different questions and the difference is the whole bug.
+     *
+     * On XWayland the native point is exact several times a second — whenever
+     * the pointer crosses an X surface — and frozen in between. Gating on the
+     * per-sample flag therefore flipped the window interactive and back
+     * repeatedly while the pointer merely moved across the desk, which meant
+     * the cat could go untouchable in the middle of being stroked. `hitTest`
+     * changes at most once a second and only on accumulated evidence, so this
+     * branch is stable for as long as the session is.
+     *
+     * When it is false the window simply stays interactive and the renderer
+     * drives touch from its own DOM pointer events, which are exact whenever
+     * the pointer is over the window. Trade-off is the documented one: the
+     * window's rect, not just the cat, absorbs clicks.
+     */
+    if (!s.hitTest) {
       if (ignoring !== false) {
         ignoring = false;
         petWin.setIgnoreMouseEvents(false);
@@ -541,8 +544,37 @@ function wireInput() {
     // wy lets the renderer know when the window is hard against (or past) the
     // top of the screen, so it can flip speech bubbles below the cat instead
     // of drawing them off-screen.
-    send("cursor", { gx: p.x, gy: p.y, lx, ly, wy, speed: lastSpeed, exact });
+    send("cursor", {
+      gx: s.x,
+      gy: s.y,
+      lx,
+      ly,
+      wy,
+      speed: lastSpeed,
+      exact: s.exact,
+      conf: s.conf,
+      hitTest: s.hitTest,
+    });
   });
+
+  /*
+   * A subsystem this easy to get wrong has to be observable on the machine that
+   * is getting it wrong, because the failure is always "the cat ignores me" and
+   * that one sentence covers every possible cause. `tools/cursor-sim.js` proves
+   * the logic; this says which regime a real session actually landed in.
+   *
+   *   PIXELCAT_DEBUG_INPUT=1 npm start
+   */
+  if (process.env.PIXELCAT_DEBUG_INPUT) {
+    const timer = setInterval(() => {
+      const s = input.status;
+      console.log(
+        `[input] cursor=${s.cursor} hitTest=${s.hitTest} conf=${s.conf} ` +
+          `gain=${s.gain}±${s.gainErr} keyboard=${s.keyboard}`
+      );
+    }, 1000);
+    if (timer.unref) timer.unref();
+  }
 
 }
 
@@ -550,6 +582,22 @@ function wireInput() {
 function wireIpc() {
   ipcMain.on("hit-rect", (_e, rect) => {
     hitRect = rect;
+  });
+
+  /*
+   * The renderer handing back a pointer position it saw for real.
+   *
+   * DOM pointer events over the pet window are exact on every platform, Wayland
+   * included, so they are ground truth — and they arrive precisely when the
+   * estimate is about to be asked its hardest question, because the pointer is
+   * approaching the cat. Feeding them back makes the cat its own calibration
+   * target: every visit re-anchors the global estimate and resets its drift.
+   */
+  ipcMain.on("pointer-sync", (_e, p) => {
+    if (!petWin || petWin.isDestroyed() || !p) return;
+    if (!Number.isFinite(p.lx) || !Number.isFinite(p.ly)) return;
+    const [wx, wy] = petWin.getPosition();
+    input.syncCursor({ x: wx + p.lx, y: wy + p.ly });
   });
 
   ipcMain.on("open-settings", openSettings);

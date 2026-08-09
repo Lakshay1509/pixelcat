@@ -173,14 +173,18 @@
         : st.keyboard === "evdev"
           ? "Typing: detected via /dev/input"
           : "Typing: unavailable";
-    // Three states, not two: `frozen` used to fall through to "tracked", which
-    // claimed the one thing that was definitely not happening.
+    // Four states, not two. `frozen` used to fall through to "tracked", which
+    // claimed the one thing that was definitely not happening — and `hybrid`
+    // (XWayland: exact over an X window, frozen over a Wayland one) had no name
+    // at all, which is how it went unnoticed for so long.
     const cursor =
       st.cursor === "native"
         ? "Cursor: tracked"
-        : st.cursor === "evdev"
-          ? "Cursor: estimated"
-          : "Cursor: not tracked";
+        : st.cursor === "hybrid"
+          ? "Cursor: tracked in part, estimated in between"
+          : st.cursor === "evdev"
+            ? "Cursor: estimated"
+            : "Cursor: not tracked";
 
     el.textContent = `${typing} · ${cursor}${st.detail ? ` — ${st.detail}` : ""}`;
     el.className =

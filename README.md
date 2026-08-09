@@ -51,13 +51,15 @@ and the naive design does not survive contact with Wayland.
 **What actually happens on Wayland** (measured on KDE, not assumed):
 
 - `screen.getCursorScreenPoint()` returned the *identical coordinate 60 times
-  out of 60 samples* while the mouse moved. Wayland does not tell an
-  unfocused app where the pointer is; Electron reports the last position the
-  cursor was over an XWayland surface, forever.
+  out of 60 samples* while the mouse moved over a Wayland window. Wayland does
+  not tell an unfocused app where the pointer is; Electron reports the last
+  position the cursor was over an XWayland surface, and holds it until the
+  cursor crosses one again — at which point it leaps the whole way in a single
+  sample.
 - `uiohook-napi` fails outright with `XkbGetKeyboard failed to locate a valid
   keyboard`, then delivers nothing.
 
-So there are three sources, chosen at runtime:
+So there are three sources, and the pointer is assembled from all of them:
 
 | Source | Where it works | Gives |
 | --- | --- | --- |
@@ -65,20 +67,55 @@ So there are three sources, chosen at runtime:
 | `uiohook-napi` | Windows, macOS (needs Accessibility), Linux/X11 | keys, scroll |
 | `/dev/input` (evdev) | Linux incl. Wayland, needs `input` group | keys, scroll, raw mouse deltas |
 
-The cursor is a **hybrid**: poll the native point, and whenever it actually
-changes, trust it. If it stops changing while raw device deltas keep arriving,
-dead-reckon from those instead. That self-selects correctly with no platform
-branching — on X11/Windows/macOS the native point moves and always wins; on
-Wayland it never moves so evdev drives.
+There is no "which source", because the honest answer on a real Wayland desktop
+is *all of them, some of the time*. Electron runs as an **XWayland** client, and
+XWayland's pointer is neither working nor frozen: `getCursorScreenPoint()` is
+exact while the cursor is over an X surface — including the cat's own window —
+and frozen the instant it crosses onto a native Wayland one.
 
-Dead reckoning drifts, because the compositor applies pointer acceleration we
-cannot observe. The saving grace: the real cursor stops at the screen edges and
-so does ours, so shoving the mouse into a corner **resyncs both exactly**. Users
-do this constantly without being told to.
+That third regime is what broke this repeatedly. The old code picked one source
+and latched: the first evdev delta flipped it to "estimated" and nothing could
+flip it back, so a native point that was telling the truth several times a
+second was discarded for the rest of the session, and the cat had no idea where
+the pointer was unless it was physically over its window.
 
-The estimate is deliberately never used to decide which pixel the pointer is on:
-that is what the `exact` flag gates. It survives only as "the mouse is moving",
-which needs no calibration — which is why there is no pointer-speed setting.
+So there is **one estimate**, and everything that can say something true about
+it gets to correct it — the native point whenever it changes, DOM pointer events
+over our own window, raw evdev deltas integrated in between, and the screen
+edges, which the real cursor stops at and so does ours (shoving the mouse into a
+corner resyncs an axis exactly, and users do that constantly without being asked
+to).
+
+The estimate carries a **confidence**: how far wrong it expects to be. Dead
+reckoning drifts because the compositor applies pointer acceleration we cannot
+observe — so it is measured instead. Any tick where the native point *and* a raw
+delta both moved is a reading of that acceleration, and confidence decays with
+distance travelled times how badly that constant is still known. A fresh session
+loses faith quickly; a calibrated one holds it across a screen.
+
+Consumers then clear a bar instead of being handed a boolean, and that is the
+part that matters:
+
+- **Eye-follow** needs a direction, and a direction survives being somewhat
+  wrong. It takes a rough fix happily, which is why the cat now watches you
+  anywhere on the desktop.
+- **Petting, hovering and hearts** need a pixel, and take nothing but an exact
+  position — a DOM event, or a native point that genuinely moved.
+
+Conflating those two is what made every previous fix break the other half of the
+feature: making the cat trust the estimate made it purr at nobody, and making it
+distrust the estimate made it go blind.
+
+The cat is also its **own calibration target**. The renderer hands every DOM
+pointer position back to main, so each time the cursor approaches the window the
+estimate is re-anchored to a true position — precision matters most just before
+you touch the cat, and that is exactly the moment the truth is available.
+
+`node tools/cursor-sim.js` drives all of this through every session type — X11,
+X11 with evdev, frozen Wayland, XWayland — with a scripted pointer and a fake
+clock, and checks what it concluded against what was actually true. Every
+regression this has ever had was in a regime the machine doing the testing could
+not be in, so run it before believing a change.
 
 **Enabling full tracking on Linux/Wayland** — one command, then log out and in:
 
@@ -94,21 +131,6 @@ deliberately sees as little as possible — key events are reduced to "a key wen
 down" and **the key code is discarded immediately**. Nothing is buffered,
 logged, or written to disk. The cat only needs to know *that* you're typing.
 
-### Falling back when there is no global cursor at all
-
-If the pointer can't be tracked globally, the window cannot hit-test it — and a
-click-through window that can't hit-test is a cat you can never touch: no drag,
-no petting, no right-click.
-
-So in that mode the window stays interactive and the **renderer** tracks the
-pointer from its own DOM `mousemove` events, which are exact whenever the cursor
-is over the window. Local events always take precedence over the global feed for
-400ms after they arrive; the global feed fills the gaps.
-
-Trade-off: while in this mode the window's rectangle (not just the cat) absorbs
-clicks. That is why the `input` group is worth the one command — with it, the
-precise per-pixel click-through comes back.
-
 ### The window is click-through except where the cat is
 
 The pet window is bigger than the cat — the padding is the stage it acts on
@@ -121,6 +143,25 @@ That hit test runs off the **cursor poll in main**, not renderer `mousemove`,
 because a click-through window receives no `mousemove` at all — the renderer
 would never learn the cursor had arrived. The renderer publishes the cat's
 opaque bounding box; main compares it against the polled cursor.
+
+Whether it may do that at all is a separate, deliberately **slow** decision. It
+is settled from accumulated evidence — how much of the pointer's real travel the
+native point managed to witness — reconsidered at most once a second, and it can
+only ever be taken away, never granted. The asymmetry is the point: losing it
+costs a window that absorbs clicks in its padding, which is irritating and
+survivable. Granting it wrongly costs the cat, because the window starts
+hit-testing against a point that is about to freeze somewhere else, and every
+click then falls straight through the cat forever. Gating this on whether the
+*current sample* happened to be exact is what made the window flip interactive
+and back several times a second on XWayland, so the cat could go untouchable
+mid-stroke.
+
+Where hit-testing is refused, the window simply stays interactive and the
+renderer drives touch from its own DOM pointer events, which are exact whenever
+the cursor is over the window. Local events take precedence over the global feed
+for 400ms after they arrive; the global feed fills the gaps. The trade-off is
+the window's rectangle, not just the cat, absorbing clicks — which is why the
+`input` group is worth the one command.
 
 ### Behaviours are overlapping drives, not exclusive states
 

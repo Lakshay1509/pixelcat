@@ -21,6 +21,7 @@ const FROM_MAIN = [
 
 const TO_MAIN = [
   "hit-rect",
+  "pointer-sync",
   "open-settings",
   "close-settings",
   "quit",
