@@ -122,8 +122,11 @@ canvas#stage {
 /* Pinned note ------------------------------------------------------------- */
 .pin {
   left: 50%;
-  top: 6px;
-  transform: translateX(-50%);
+  top: 0;
+  /* Pulled up by its own height, so the renderer's `top` is the note's BOTTOM
+     edge — which is what lets it be placed against the cat's head without the
+     renderer having to know how tall the note wrapped to. */
+  transform: translate(-50%, -100%);
   /*
    * Sized by its text, not by the room left over beside it. The renderer sets
    * `left` in pixels, and an absolutely positioned box laid out that way is
@@ -146,4 +149,10 @@ canvas#stage {
 
 .pin.show {
   display: block;
+}
+
+/* Flipped below the cat when the window is against the top of the screen and
+   "above the head" would be off-screen — same rule the bubble follows. */
+.pin.below {
+  transform: translate(-50%, 0);
 }

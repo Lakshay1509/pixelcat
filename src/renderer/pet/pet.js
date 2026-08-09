@@ -814,15 +814,26 @@
       : `${catY + peekY + oy - 6}px`;
 
     /*
-     * The pinned note belongs to the CAT too, and used to be placed from the
-     * WINDOW — top centre, fixed. That looks identical while the cat is sitting
-     * still and comes apart the moment it moves: peek slides the sprite off to
-     * a screen edge and the note stays behind, hanging over the very video the
-     * cat just got out of the way of. It takes the same offsets the sprite does.
+     * The pinned note goes ABOVE THE HEAD, exactly where the bubble goes, and
+     * used to be placed from the WINDOW — top centre, fixed. That is
+     * indistinguishable from correct while the cat sits still and comes apart
+     * the moment it moves: peek slides the sprite off to a screen edge and the
+     * note stays behind, hanging over the very video the cat got out of the way
+     * of. Following it sideways is not enough either — anchored to the window's
+     * top the note still floats 64px above the cat, which reads as no more
+     * attached than before.
+     *
+     * It cannot share the spot with a sentence, so while the cat is talking the
+     * note stands down. It is the one that can afford to wait: it will still be
+     * there in ten seconds, and the sentence will not.
      */
+    pinEl.classList.toggle("below", flip);
+    pinEl.style.visibility = bubbleEl.classList.contains("show") ? "hidden" : "";
     const pinHalf = (pinEl.offsetWidth || 0) / 2;
     pinEl.style.left = `${clamp(headX, pinHalf + 2, L.width - pinHalf - 2)}px`;
-    pinEl.style.top = `${6 + peekY + oy}px`;
+    pinEl.style.top = flip
+      ? `${catY + peekY + CatSprites.H * L.scale + oy - 4}px`
+      : `${catY + peekY + oy - 6}px`;
   }
 
   requestAnimationFrame(frame);
