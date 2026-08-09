@@ -69,7 +69,13 @@ export const hex = (h) => [
 ];
 
 // --- sprite -> slots -------------------------------------------------------
-export function rasterise(grid, mask) {
+/*
+ * `crop` (in sprite coords) blanks everything outside it BEFORE the outline is
+ * dilated, which is the only way a partial cat gets a closed outline. Dilating
+ * first and cropping after leaves the cut edge bare — the neck's outline lives
+ * inside the body, so a head cropped out of a whole cat ends in mid-fur.
+ */
+export function rasterise(grid, mask, crop = null) {
   const { W, H } = S;
   const slots = [];
   for (let y = 0; y < H; y++) {
@@ -85,6 +91,11 @@ export function rasterise(grid, mask) {
     }
     slots.push(row);
   }
+  if (crop)
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++)
+        if (y < crop.y || y >= crop.y + crop.h || x < crop.x || x >= crop.x + crop.w)
+          slots[y][x] = ".";
   const out = slots.map((r) => r.slice());
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {

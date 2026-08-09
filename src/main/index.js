@@ -391,6 +391,12 @@ function openSettings() {
     minWidth: 560,
     minHeight: 560,
     title: "Pixelcat",
+    // The only window that ever reaches a taskbar — the cat itself sets
+    // skipTaskbar. Without this it inherits Electron's own default icon, so an
+    // unpackaged run advertises itself as a generic Electron app. Packaged
+    // builds get their icon from the desktop entry instead, which is why this
+    // was invisible until someone ran it from source.
+    icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#141418",
     autoHideMenuBar: true,
     webPreferences: {
