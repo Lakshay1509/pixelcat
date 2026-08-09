@@ -65,7 +65,7 @@ So there are three sources, and the pointer is assembled from all of them:
 | --- | --- | --- |
 | `getCursorScreenPoint()` | Windows, macOS, Linux/X11 | exact cursor |
 | `uiohook-napi` | Windows, macOS (needs Accessibility), Linux/X11 | keys, scroll |
-| `/dev/input` (evdev) | Linux incl. Wayland, needs `input` group | keys, scroll, raw mouse deltas |
+| `/dev/input` (evdev) | Linux incl. Wayland, needs `input` group | keys, scroll (wheel *and* fingers), raw mouse deltas |
 
 There is no "which source", because the honest answer on a real Wayland desktop
 is *all of them, some of the time*. Electron runs as an **XWayland** client, and
@@ -130,6 +130,47 @@ cat (see below). It says so in settings rather than silently doing nothing.
 deliberately sees as little as possible — key events are reduced to "a key went
 down" and **the key code is discarded immediately**. Nothing is buffered,
 logged, or written to disk. The cat only needs to know *that* you're typing.
+
+### Touchpad scroll has to be reconstructed, not received
+
+Scrolling with a wheel is a hardware event: the mouse emits `REL_WHEEL` and
+there is nothing to work out. Scrolling on a laptop touchpad is **not an event
+at all** — it is an interpretation. The kernel reports only where each finger
+is (`EV_ABS` multitouch), and libinput decides in userspace that two of them
+moving together means scroll.
+
+Reading `/dev/input` bypasses libinput, which is the whole point on Wayland — so
+we inherit that job too. Without it the yarn ball answers only to a plugged-in
+mouse and the trackpad does nothing, which is exactly how this read: the
+touchpad here reports `EV=10001b`, with no `EV_REL` bit anywhere in it.
+
+So `evdev-linux.js` does what libinput does. It tracks live fingers by their
+multitouch slots, and while there are exactly **two**, averages their vertical
+travel per frame — averages rather than sums, because two fingers moving
+together are one scroll, and because it makes a pinch cancel out, which is right.
+
+Two details do most of the work:
+
+- **The threshold is a fraction of the pad, not a number of units.** Device
+  units have no fixed size — pads differ by roughly 5x in how many they report
+  per millimetre, and the range cannot be read without an ioctl Node has no way
+  to issue. So the pad's height is learned from the finger positions themselves,
+  which costs nothing and converges within a swipe or two. A guess is used until
+  then, and being 2x out merely makes the first swipe eager or lazy.
+- **It is notched, at most one report per 50ms.** A finger is continuous and
+  would otherwise report at the pad's full ~125Hz. Travel keeps accumulating in
+  between, so scrolling slowly makes the ticks sparse rather than absent — this
+  is what makes a touchpad feel like a wheel instead of a firehose.
+
+Devices that report a wheel of their own are left alone, so an Apple trackpad —
+whose driver hands over both touch data *and* a `REL_WHEEL` it derived from that
+same data — cannot be counted twice.
+
+`node tools/touch-scroll-sim.js` scripts the fingers — a pinch that must cancel,
+a re-grip that must not fire, a pad half the size of this one — and checks what
+came out. `node tools/scroll-probe.js` does the same job on real hardware, and
+separates the three ways this fails: devices that will not open, devices that
+open but say nothing, and fingers that arrive but are not read as a scroll.
 
 ### The window is click-through except where the cat is
 

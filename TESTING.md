@@ -32,7 +32,8 @@ Tick these off after any change. Plain manual checks, no tools needed.
 - [ ] Eyes follow the mouse pointer
 - [ ] Type fast (60+ wpm) — it blushes and steams
 - [ ] Type — its paws knead
-- [ ] Scroll — little paper bits fall out
+- [ ] Scroll a mouse wheel — a ball of yarn rolls out and is batted along
+- [ ] Scroll with two fingers on a touchpad — same, and in the direction you swipe
 - [ ] Leave it alone 2 minutes — it gets sleepy, half-lids, zzz
 
 ## At the top of the screen

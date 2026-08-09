@@ -11,7 +11,7 @@
     "dev": "electron . --dev",
     "icons": "node tools/make-icons.mjs",
     "preview": "node tools/preview.mjs /tmp/cat-preview.png 7",
-    "test": "node tools/cursor-sim.js",
+    "test": "node tools/cursor-sim.js && node tools/touch-scroll-sim.js",
     "prebuild": "node tools/make-icons.mjs",
     "build": "electron-builder",
     "build:linux": "electron-builder --linux",

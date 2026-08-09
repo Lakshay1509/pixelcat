@@ -9,6 +9,11 @@
  * The thing to look for is the EV_REL row. The cat's Wayland cursor tracking is
  * dead-reckoned from REL_X/REL_Y deltas, so a device that only reports EV_ABS
  * (most laptop touchpads and every touchscreen) contributes nothing to it.
+ *
+ * Scroll is the exception. A touchpad emits no REL_WHEEL at all — scrolling on
+ * one is libinput's interpretation of two fingers moving, not a hardware event
+ * — so evdev-linux.js reconstructs it from ABS_MT_POSITION_Y. That is why the
+ * verdict below accepts either source.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +34,8 @@ const NAMES = {};
 
 const TYPE = { 1: "KEY", 2: "REL", 3: "ABS", 4: "MSC", 5: "SW", 17: "LED", 18: "SND", 20: "REP" };
 const REL = { 0: "X", 1: "Y", 6: "HWHEEL", 8: "WHEEL", 11: "WHEEL_HI", 12: "HWHEEL_HI" };
+// Only the multitouch axes are broken out; the rest of EV_ABS is noise here.
+const ABS = { 0x2f: "MT_SLOT", 0x35: "MT_X", 0x36: "MT_Y", 0x39: "MT_ID" };
 
 const devices = [];
 for (const node of fs.readdirSync("/dev/input").filter((n) => /^event\d+$/.test(n))) {
@@ -67,7 +74,10 @@ setInterval(() => {
         const type = buf.readUInt16LE(off + 16);
         const code = buf.readUInt16LE(off + 18);
         if (type === 0) continue; // EV_SYN is just a frame marker
-        const key = (TYPE[type] || type) + (type === 2 ? `:${REL[code] || code}` : "");
+        const key =
+          (TYPE[type] || type) +
+          (type === 2 ? `:${REL[code] || code}` : "") +
+          (type === 3 && ABS[code] ? `:${ABS[code]}` : "");
         d.counts[key] = (d.counts[key] || 0) + 1;
       }
       if (bytes < buf.length) break;
@@ -103,11 +113,20 @@ function report() {
   const has = (fn) => rows.some((d) => Object.keys(d.counts).some(fn));
   const rel = has((k) => k.startsWith("REL:X") || k.startsWith("REL:Y"));
   const wheel = has((k) => k.includes("WHEEL"));
-  const abs = has((k) => k === "ABS");
+  const fingers = has((k) => k === "ABS:MT_Y");
+  const abs = has((k) => k.startsWith("ABS"));
   const key = has((k) => k === "KEY");
   console.log("\nVERDICT");
   console.log(`  pointer motion (REL_X/Y) : ${rel ? "YES" : "NO   <-- cursor tracking cannot work"}`);
-  console.log(`  scroll (REL_WHEEL)       : ${wheel ? "YES" : "NO   <-- scroll reaction cannot work"}`);
+  console.log(`  wheel scroll (REL_WHEEL) : ${wheel ? "YES" : "no   <-- no mouse wheel was turned"}`);
+  console.log(
+    `  finger scroll (ABS_MT_Y) : ${fingers ? "YES  <-- touchpad scroll is rebuilt from these" : "no"}`
+  );
+  console.log(
+    `  => scroll reaction       : ${
+      wheel || fingers ? "WORKS" : "CANNOT WORK — no wheel and no finger positions"
+    }`
+  );
   console.log(`  absolute motion (EV_ABS) : ${abs ? "YES  <-- touchpad reports here instead" : "no"}`);
   console.log(`  keys (EV_KEY)            : ${key ? "YES" : "NO"}`);
   process.exit(0);
