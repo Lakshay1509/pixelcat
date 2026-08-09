@@ -44,6 +44,31 @@
  *
  * KEYBOARD
  * uiohook where it works; /dev/input where it doesn't.
+ *
+ * WHEEL
+ * A mouse wheel notches. One click is one message carrying a delta of 120, and
+ * libuiohook hands that over as a rotation of ±1, so one turn of a wheel is one
+ * report and it says which way.
+ *
+ * A Windows precision touchpad does neither of those things. It is an
+ * ultra-high-resolution device and Windows treats it as one: the documented
+ * default delta for a two-finger drag is 1, not 120. libuiohook floor-divides by
+ * 120 to get its rotation, so 119 messages out of every 120 arrive as rotation
+ * ZERO — a firehose of reports at the pad's full rate, none of which say which
+ * direction the fingers are going.
+ *
+ * Both halves of that broke the yarn ball. The renderer bats it once per report,
+ * so a touchpad batted it a hundred times a second: the ball went straight to
+ * its maximum speed, hit the edge of the canvas, and stayed pinned there for the
+ * whole scroll. Nothing arced, nothing came back, and it was re-kicked before it
+ * could ever hop — which is what "the scroll animation doesn't show" looks like.
+ *
+ * So the firehose is notched here into the shape a wheel already has, at the
+ * same cadence evdev-linux.js gives a Linux touchpad, carrying the last
+ * direction that was actually observed rather than a guess. A real rotation
+ * still goes straight through the instant it arrives: a wheel click must not
+ * wait 50ms to be answered, and it is the only thing that ever teaches
+ * direction.
  */
 const { screen } = require("electron");
 
@@ -465,6 +490,59 @@ function startGlobal({ onKey, onWheel }) {
   return status;
 }
 
+// The same 50ms evdev-linux.js notches a Linux touchpad at, for the same reason
+// and so both platforms feel identical.
+const WHEEL_NOTCH_MS = 50;
+// Sub-notch reports needed before a drag counts as a scroll at all. A precision
+// touchpad reports a resting finger's tremor; one message is not a gesture.
+const WHEEL_SUBSTEPS = 3;
+
+/*
+ * Wraps a wheel consumer so it sees notches instead of whatever the platform
+ * happened to send. Exported for tools/wheel-sim.js, which drives it with a
+ * captured Windows precision-touchpad stream — the regime this machine cannot
+ * be in, and therefore the one that has to be tested without it.
+ */
+function notchWheel(onWheel, now = () => Date.now()) {
+  let dir = 0; // last direction actually observed — never guessed
+  let steps = 0; // sub-notch reports since the last one passed on
+  let last = 0;
+
+  return (rotation) => {
+    const t = now();
+    if (rotation) {
+      // A whole notch. A fact, so it is not delayed and not rate-limited.
+      dir = Math.sign(rotation);
+      steps = 0;
+      last = t;
+      onWheel({ rotation });
+      return;
+    }
+    // Travel keeps accumulating while the gate is shut, so slowing a drag down
+    // makes the reports sparse rather than making them stop.
+    if (++steps < WHEEL_SUBSTEPS) return;
+    if (t - last < WHEEL_NOTCH_MS) return;
+    steps = 0;
+    last = t;
+    /*
+     * `dir` is 0 until the first whole notch of the session, which on a
+     * precision touchpad is 120 units of travel away. The renderer already has a
+     * rule for a report with no direction — keep going the way the ball is
+     * already going — and that is the right answer for the first flick.
+     *
+     * It is also deliberately not cleared between gestures, which means the
+     * first 120 units of a scroll that REVERSES carry the old direction and the
+     * ball sets off the wrong way before correcting itself. That is a real
+     * wrongness and it is the best available: the sign of a sub-notch step is
+     * discarded inside libuiohook before we are handed anything, so there is
+     * nothing here to read it from. Remembering the last direction still beats
+     * remembering nothing, because scrolling the same way twice is much more
+     * common than turning around.
+     */
+    onWheel({ rotation: dir });
+  };
+}
+
 function tryHook({ onKey, onWheel }) {
   let uIOhook;
   try {
@@ -476,7 +554,10 @@ function tryHook({ onKey, onWheel }) {
   }
   try {
     uIOhook.on("keydown", () => onKey && onKey());
-    if (onWheel) uIOhook.on("wheel", (e) => onWheel({ rotation: e.rotation || 0 }));
+    if (onWheel) {
+      const notched = notchWheel(onWheel);
+      uIOhook.on("wheel", (e) => notched((e && e.rotation) || 0));
+    }
     uIOhook.start();
     hook = uIOhook;
     status.keyboard = "ok";
@@ -506,4 +587,12 @@ function stopGlobal() {
   }
 }
 
-module.exports = { startCursor, stopCursor, startGlobal, stopGlobal, syncCursor, status };
+module.exports = {
+  startCursor,
+  stopCursor,
+  startGlobal,
+  stopGlobal,
+  syncCursor,
+  notchWheel,
+  status,
+};

@@ -53,6 +53,24 @@ Put it at the very top, then check:
 - [ ] With the cat at the right edge, the whole bubble is readable, not cut off
 - [ ] Turn off "AI agent reactions" in settings — no dots, no hops
 
+## Windows only
+
+Both of these were reported broken and fixed without a Windows machine to check
+them on, so they are the first things to try there. Run `node tools/agent-probe.js`
+alongside — it prints what the cat can actually see.
+
+- [ ] Scroll with two fingers on a **precision touchpad** — the yarn ball rolls
+      out and is batted along, the same as with a mouse wheel. Before the fix it
+      shot to the edge of the canvas and sat there.
+- [ ] Keep scrolling for several seconds — the ball keeps moving and hopping, it
+      does not stay pinned against the edge
+- [ ] Scroll a mouse wheel — still one bat per click, with no lag
+- [ ] Start Claude Code — three dots appear. Works for **both** install shapes:
+      the native installer (`claude.exe`) and a global npm install (`node.exe`)
+- [ ] `agent-probe` shows `procs:` with a matched tree, not `unavailable`
+- [ ] No black console window appears at launch or afterwards
+- [ ] Quit the cat, then check Task Manager — **no `powershell.exe` left behind**
+
 ## Peek mode (stay out of the way)
 
 - [ ] Play a video in a browser or a player — after ~5s the cat slides to the
